@@ -11,8 +11,6 @@
 #include <list.h>
 #include "../config.h"
 
-#define DO_THE_PTR 1
-
 R_LIB_VERSION (r_bin);
 
 #define DB a->sdb;
@@ -78,7 +76,10 @@ R_API RBinXtrData *r_bin_xtrdata_new(void *xtr_obj, FREE_XTR free_xtr, RBuffer *
 		return data;
 	}
 	data = R_NEW0 (RBinXtrData);
-	if (!data) return NULL;
+	if (!data) {
+		r_buf_free (tb);
+		return NULL;
+	}
 	data->xtr_obj = xtr_obj;
 	data->free_xtr = free_xtr;
 	data->buf = tb;
@@ -629,15 +630,9 @@ R_API int r_bin_reload(RBin *bin, RIODesc *desc, ut64 baseaddr) {
 	if (!buf_bytes)
 		return false;
 
-	if (!r_bin_file_set_bytes (bf, buf_bytes, sz))
-#if DO_THE_PTR
-	{
-		free (buf_bytes);
-	}
-#else
-	{ }
+	r_bin_file_set_bytes (bf, buf_bytes, sz);
 	free (buf_bytes);
-#endif
+
 	if (r_list_length (the_obj_list) == 1) {
 		RBinObject *old_o = (RBinObject *)r_list_get_n (the_obj_list, 0);
 		res = r_bin_load_io_at_offset_as (bin, desc, baseaddr,
@@ -753,11 +748,9 @@ R_API int r_bin_load_io_at_offset_as_sz(RBin *bin, RIODesc *desc, ut64 baseaddr,
 		binfile = r_bin_file_new_from_bytes (bin, desc->name, buf_bytes, sz,
 			file_sz, bin->rawstr, baseaddr, loadaddr, desc->fd, name, NULL, offset);
 	}
-#if 0
-	else {
-		free (buf_bytes); // possible UAF
-	}
-#endif
+
+	free (buf_bytes);
+
 	return binfile? r_bin_file_set_cur_binfile (bin, binfile): false;
 }
 
@@ -1036,14 +1029,9 @@ static RBinObject *r_bin_object_new(RBinFile *binfile, RBinPlugin *plugin, ut64 
 
 static int r_bin_file_set_bytes(RBinFile *binfile, const ut8 *bytes, ut64 sz) {
 	if (!bytes) return false;
-#if DO_THE_PTR
-	r_buf_free (binfile->buf);
-	binfile->buf = r_buf_new_with_pointers (bytes, sz);
-#else
 	r_buf_free (binfile->buf);
 	binfile->buf = r_buf_new ();
 	r_buf_set_bytes (binfile->buf, bytes, sz);
-#endif
 	return binfile->buf != NULL;
 }
 
@@ -1459,7 +1447,10 @@ R_API RBin *r_bin_new() {
 	bin->binxtrs->free = free;
 	for (i = 0; bin_xtr_static_plugins[i]; i++) {
 		static_xtr_plugin = R_NEW0 (RBinXtrPlugin);
-		if (!static_xtr_plugin) return NULL;
+		if (!static_xtr_plugin) {
+			free (bin);
+			return NULL;
+		}
 		*static_xtr_plugin = *bin_xtr_static_plugins[i];
 		r_bin_xtr_add (bin, static_xtr_plugin);
 	}
