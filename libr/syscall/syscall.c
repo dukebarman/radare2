@@ -1,8 +1,7 @@
-/* radare - Copyright 2008-2014 - LGPL -- pancake */
+/* radare - Copyright 2008-2018 - LGPL -- pancake */
 
 #include <r_types.h>
 #include <r_util.h>
-#include <r_db.h>
 #include <r_syscall.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,51 +9,135 @@
 
 R_LIB_VERSION (r_syscall);
 
+// TODO: now we use sdb
 extern RSyscallPort sysport_x86[];
+extern RSyscallPort sysport_avr[];
+
+R_API RSyscall* r_syscall_ref(RSyscall *sc) {
+	sc->refs++;
+	return sc;
+}
 
 R_API RSyscall* r_syscall_new() {
 	RSyscall *rs = R_NEW0 (RSyscall);
 	if (rs) {
 		rs->sysport = sysport_x86;
-		rs->cb_printf = (PrintfCallback)printf;
 		rs->regs = fastcall_x86_32;
+		rs->srdb = sdb_new0 (); // sysregs database
+		rs->db = sdb_new0 ();
 	}
 	return rs;
 }
 
 R_API void r_syscall_free(RSyscall *s) {
-	sdb_free (s->db);
-	free(s->os);
-	memset (s, 0, sizeof (RSyscall));
-	free (s);
+	if (s) {
+		if (s->refs > 0) {
+			s->refs--;
+			return;
+		}
+		sdb_free (s->srdb);
+		sdb_free (s->db);
+		free (s->os);
+		free (s->cpu);
+		free (s->arch);
+		free (s);
+	}
 }
 
 /* return fastcall register argument 'idx' for a syscall with 'num' args */
 R_API const char *r_syscall_reg(RSyscall *s, int idx, int num) {
-	if (num<0 || num>=R_SYSCALL_ARGS || idx<0 || idx>=R_SYSCALL_ARGS)
+	if (num < 0 || num >= R_SYSCALL_ARGS || idx < 0 || idx >= R_SYSCALL_ARGS) {
 		return NULL;
+	}
 	return s->regs[num].arg[idx];
 }
 
-R_API int r_syscall_setup(RSyscall *s, const char *arch, const char *os, int bits) {
-	const char *file;
-	if (!os || !*os)
+static Sdb *openDatabase(Sdb *db, const char *name) {
+	char *file = r_str_newf ( R_JOIN_3_PATHS ("%s", R2_SDB, "%s.sdb"),
+		r_sys_prefix (NULL), name);
+	if (r_file_exists (file)) {
+		if (db) {
+			sdb_reset (db);
+			sdb_open (db, file);
+		} else {
+			db = sdb_new (0, file, 0);
+		}
+	}
+	free (file);
+	return db;
+}
+
+static inline bool syscall_reload_needed(RSyscall *s, const char *os, const char *arch, int bits) {
+	if (!s->os || strcmp (s->os, os)) {
+		return true;
+	}
+	if (!s->arch || strcmp (s->arch, arch)) {
+		return true;
+	}
+	return s->bits != bits;
+}
+
+static inline bool sysregs_reload_needed(RSyscall *s, const char *arch, int bits, const char *cpu) {
+	if (!s->arch || strcmp (s->arch, arch)) {
+		return true;
+	}
+	if (s->bits != bits) {
+		return true;
+	}
+	return !s->cpu || strcmp (s->cpu, cpu);
+}
+
+// TODO: should be renamed to r_syscall_use();
+R_API bool r_syscall_setup(RSyscall *s, const char *arch, int bits, const char *cpu, const char *os) {
+	bool syscall_changed, sysregs_changed;
+
+	if (!os || !*os) {
 		os = R_SYS_OS;
-	if (!arch) arch = R_SYS_ARCH;
+	}
+	if (!arch) {
+		arch = R_SYS_ARCH;
+	}
+	if (!cpu) {
+		cpu = arch;
+	}
+	syscall_changed = syscall_reload_needed (s, os, arch, bits);
+	sysregs_changed = sysregs_reload_needed (s, arch, bits, cpu);
 
 	free (s->os);
 	s->os = strdup (os);
 
-	if (!strcmp (os, "any")) // ignored
-		return true;
+	free (s->cpu);
+	s->cpu = strdup (cpu);
 
-	if (!strcmp (arch, "mips"))
+	free (s->arch);
+	s->arch = strdup (arch);
+
+	s->bits = bits;
+
+	if (!strcmp (os, "any")) { // ignored
+		return true;
+	}
+	if (!strcmp (arch, "mips")) {
 		s->regs = fastcall_mips;
-	else if (!strcmp (arch,"sh"))
+	} else if (!strcmp (arch, "avr")) {
+		s->sysport = sysport_avr;
+	} else if (!strcmp (os, "darwin") || !strcmp (os, "osx") || !strcmp (os, "macos")) {
+		os = "darwin";
+		s->regs = fastcall_x86_64;
+	} else if (!strcmp (arch,"sh")) {
 		s->regs = fastcall_sh;
-	else if (!strcmp (arch, "arm"))
-		s->regs = fastcall_arm;
-	else if (!strcmp (arch, "x86")) {
+	} else if (!strcmp (arch, "arm")) {
+		switch (bits) {
+		case 16:
+		case 32:
+			s->regs = fastcall_arm;
+			break;
+		case 64:
+			s->regs = fastcall_arm64;
+			break;
+		}
+	} else if (!strcmp (arch, "x86")) {
+		s->sysport = sysport_x86;
 		switch (bits) {
 		case 8:
 			s->regs = fastcall_x86_8;
@@ -68,134 +151,177 @@ R_API int r_syscall_setup(RSyscall *s, const char *arch, const char *os, int bit
 		}
 	}
 
-#define SYSCALLPATH R2_LIBDIR"/radare2/"R2_VERSION"/syscall"
-	file = sdb_fmt (0, "%s/%s-%s-%d.sdb",
-		SYSCALLPATH, os, arch, bits);
-	if (!r_file_exists (file)) {
-		//eprintf ("r_syscall_setup: Cannot find '%s'\n", file);
-		return R_FALSE;
+	if (syscall_changed) {
+		char *dbName = r_str_newf (R_JOIN_2_PATHS ("syscall", "%s-%s-%d"),
+			os, arch, bits);
+		if (dbName) {
+			s->db = openDatabase (s->db, dbName);
+			free (dbName);
+		}
 	}
 
-	//eprintf ("DBG098: syscall->db must be reindexed for k\n");
-#if 0
-	// TODO: use sdb_reset (s->db);
-	/// XXX: memoization doesnt seems to work because RSyscall is recreated instead of configured :(
-	sdb_close (s->db);
-	sdb_reset (s->db);
-	sdb_open (s->db, file);
-#else
-	sdb_close (s->db);
-	sdb_free (s->db);
-	s->db = sdb_new (0, file, 0);
-#endif
-	if (s->fd)
+	if (sysregs_changed) {
+		char *dbName = r_str_newf (R_JOIN_2_PATHS ("sysregs", "%s-%d-%s"),
+			arch, bits, cpu);
+		if (dbName) {
+			sdb_free (s->srdb);
+			s->srdb = openDatabase (NULL, dbName);
+			free (dbName);
+		}
+	}
+	if (s->fd) {
 		fclose (s->fd);
-	s->fd = NULL;
-	return true;
-}
-
-/// XXX wtf is this function for?
-R_API int r_syscall_setup_file(RSyscall *s, const char *path) {
-	if (s->fd)
-		fclose (s->fd);
-	s->fd = r_sandbox_fopen (path, "r");
-	if (s->fd == NULL)
-		return false;
-	/* TODO: load info from file */
+		s->fd = NULL;
+	}
 	return true;
 }
 
 R_API RSyscallItem *r_syscall_item_new_from_string(const char *name, const char *s) {
 	RSyscallItem *si;
 	char *o;
-	if (!name || !s) return NULL;
-	si = R_NEW0 (RSyscallItem);
+	if (!name || !s) {
+		return NULL;
+	}
 	o = strdup (s);
-	r_str_split (o, ',');
+	int cols = r_str_split (o, ',');
+	if (cols < 3) {
+		free (o);
+		return NULL;
+	}
+
+	si = R_NEW0 (RSyscallItem);
+	if (!si) {
+		free (o);
+		return NULL;
+	}
 	si->name = strdup (name);
-	si->swi = r_num_get (NULL, r_str_word_get0 (o, 0));
-	si->num = r_num_get (NULL, r_str_word_get0 (o, 1));
-	si->args = r_num_get (NULL, r_str_word_get0 (o, 2));
-	si->sargs = strdup (r_str_word_get0 (o, 3));
+	si->swi = (int)r_num_get (NULL, r_str_word_get0 (o, 0));
+	si->num = (int)r_num_get (NULL, r_str_word_get0 (o, 1));
+	si->args = (int)r_num_get (NULL, r_str_word_get0 (o, 2));
+	//in a definition such as syscall=0x80,0,4,
+	//the string at index 3 is 0 causing oob read afterwards
+	si->sargs = calloc (si->args + 1, sizeof (char));
+	if (!si->sargs) {
+		free (si);
+		free (o);
+		return NULL;
+	}
+	strncpy (si->sargs, r_str_word_get0 (o, 3), si->args);
 	free (o);
 	return si;
 }
 
 R_API void r_syscall_item_free(RSyscallItem *si) {
-	if (!si) return;
+	if (!si) {
+		return;
+	}
 	free (si->name);
 	free (si->sargs);
 	free (si);
 }
 
-static int getswi(Sdb *p, int swi) {
-	if (p && swi == -1) {
-		swi = (int)sdb_array_get_num (p, "_", 0, NULL);
-		if (!swi)
-			swi = 0x80; // default hardcoded?
+static int getswi(RSyscall *s, int swi) {
+	if (s && swi == -1) {
+		return r_syscall_get_swi (s);
 	}
 	return swi;
 }
 
+R_API int r_syscall_get_swi(RSyscall *s) {
+	return (int)sdb_num_get (s->db, "_", NULL);
+}
+
 R_API RSyscallItem *r_syscall_get(RSyscall *s, int num, int swi) {
 	const char *ret, *ret2, *key;
-	RSyscallItem *si;
-	if (!s || !s->db)
-		return NULL;
-	swi = getswi (s->db, swi);
-	key = sdb_fmt (0, "0x%02x.%d", swi, num);
-	ret = sdb_const_get (s->db, key, 0);
-	if (ret == NULL)
-		return NULL;
-	ret2 = sdb_const_get (s->db, ret, 0);
-	if (ret2 == NULL) {
+	if (!s || !s->db) {
+		eprintf ("Syscall database not loaded\n");
 		return NULL;
 	}
-	si = r_syscall_item_new_from_string (ret, ret2);
-	return si;
+	swi = getswi (s, swi);
+	if (swi < 16) {
+		key = sdb_fmt ("%d.%d", swi, num);
+	} else {
+		key = sdb_fmt ("0x%02x.%d", swi, num);
+	}
+	ret = sdb_const_get (s->db, key, 0);
+	if (!ret) {
+		key = sdb_fmt ("0x%02x.0x%02x", swi, num); // Workaround until Syscall SDB is fixed
+		ret = sdb_const_get (s->db, key, 0);
+		if (!ret) {
+			return NULL;
+		}
+	}
+	ret2 = sdb_const_get (s->db, ret, 0);
+	if (!ret2) {
+		return NULL;
+	}
+	return r_syscall_item_new_from_string (ret, ret2);
 }
 
 R_API int r_syscall_get_num(RSyscall *s, const char *str) {
-	if (!s || !s->db)
+	if (!s || !s->db) {
 		return -1;
+	}
 	return (int)sdb_array_get_num (s->db, str, 1, NULL);
 }
 
 R_API const char *r_syscall_get_i(RSyscall *s, int num, int swi) {
 	char foo[32];
-	if (!s || !s->db)
+	if (!s || !s->db) {
 		return NULL;
-	swi = getswi (s->db, swi);
+	}
+	swi = getswi (s, swi);
 	snprintf (foo, sizeof (foo), "0x%x.%d", swi, num);
 	return sdb_const_get (s->db, foo, 0);
-}
-
-R_API const char *r_syscall_get_io(RSyscall *s, int ioport) {
-	int i;
-	if (!s) return NULL;
-	for (i=0; s->sysport[i].name; i++) {
-		if (ioport == s->sysport[i].port)
-			return s->sysport[i].name;
-	}
-	return NULL;
 }
 
 static int callback_list(void *u, const char *k, const char *v) {
 	RList *list = (RList*)u;
 	if (!strchr (k, '.')) {
 		RSyscallItem *si = r_syscall_item_new_from_string (k, v);
-		if (!strchr (si->name, '.'))
+		if (!si) {
+			return 1;
+		}
+		if (!strchr (si->name, '.')) {
 			r_list_append (list, si);
+		}
 	}
 	return 1; // continue loop
 }
 
 R_API RList *r_syscall_list(RSyscall *s) {
 	RList *list;
-	if (!s || !s->db)
+	if (!s || !s->db) {
 		return NULL;
+	}
 	// show list of syscalls to stdout
 	list = r_list_newf ((RListFree)r_syscall_item_free);
 	sdb_foreach (s->db, callback_list, list);
 	return list;
+}
+
+/* io and sysregs */
+R_API const char *r_syscall_get_io(RSyscall *s, int ioport) {
+	int i;
+	if (!s) {
+		return NULL;
+	}
+	const char *name = r_syscall_sysreg (s, "io", ioport);
+	if (name) {
+		return name;
+	}
+	for (i = 0; s->sysport[i].name; i++) {
+		if (ioport == s->sysport[i].port) {
+			return s->sysport[i].name;
+		}
+	}
+	return NULL;
+}
+
+R_API const char* r_syscall_sysreg(RSyscall *s, const char *type, ut64 num) {
+	if (!s || !s->db) {
+		return NULL;
+	}
+	const char *key = sdb_fmt ("%s,%"PFMT64d, type, num);
+	return sdb_const_get (s->db, key, 0);
 }

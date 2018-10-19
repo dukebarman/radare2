@@ -14,7 +14,7 @@ typedef struct {
 static libqnxr_t *desc = NULL;
 static RIODesc *rioqnx = NULL;
 
-static int __plugin_open (RIO *io, const char *file, ut8 many) {
+static bool __plugin_open (RIO *io, const char *file, bool many) {
 	return (!strncmp (file, "qnx://", 6));
 }
 
@@ -34,7 +34,9 @@ static int debug_qnx_read_at (ut8 *buf, int sz, ut64 addr) {
 		memcpy (buf, c_buff, sz);
 		return sz;
 	}
-	if (sz < 1 || addr >= UT64_MAX) return -1;
+	if (sz < 1 || addr >= UT64_MAX) {
+		return -1;
+	}
 	for (x = 0; x < packets; x++) {
 		qnxr_read_memory (desc, addr + x * size_max, (buf + x * size_max), size_max);
 	}
@@ -78,8 +80,9 @@ static RIODesc *__open (RIO *io, const char *file, int rw, int mode) {
 	RIOQnx *rioq;
 	char host[128], *port, *p;
 
-	if (!__plugin_open (io, file, 0))
+	if (!__plugin_open (io, file, 0)) {
 		return NULL;
+	}
 	if (rioqnx) {
 		// FIX: Don't allocate more than one RIODesc
 		return rioqnx;
@@ -94,7 +97,9 @@ static RIODesc *__open (RIO *io, const char *file, int rw, int mode) {
 	*port = '\0';
 	port++;
 	p = strchr (port, '/');
-	if (p) *p = 0;
+	if (p) {
+		*p = 0;
+	}
 
 	if (r_sandbox_enable (0)) {
 		eprintf ("sandbox: Cannot use network\n");
@@ -105,7 +110,7 @@ static RIODesc *__open (RIO *io, const char *file, int rw, int mode) {
 	int i_port = atoi (port);
 	if (qnxr_connect (&rioq->desc, host, i_port) == 0) {
 		desc = &rioq->desc;
-		rioqnx = r_io_desc_new (&r_io_plugin_qnx, rioq->desc.sock->fd, file, rw, mode, rioq);
+		rioqnx = r_io_desc_new (io, &r_io_plugin_qnx, file, rw, mode, rioq);
 		return rioqnx;
 	}
 	eprintf ("qnx.io.open: Cannot connect to host.\n");
@@ -115,7 +120,9 @@ static RIODesc *__open (RIO *io, const char *file, int rw, int mode) {
 
 static int __write (RIO *io, RIODesc *fd, const ut8 *buf, int count) {
 	ut64 addr = io->off;
-	if (!desc) return -1;
+	if (!desc) {
+		return -1;
+	}
 	return debug_qnx_write_at (buf, count, addr);
 }
 
@@ -126,7 +133,9 @@ static ut64 __lseek (RIO *io, RIODesc *fd, ut64 offset, int whence) {
 static int __read (RIO *io, RIODesc *fd, ut8 *buf, int count) {
 	memset (buf, 0xff, count);
 	ut64 addr = io->off;
-	if (!desc) return -1;
+	if (!desc) {
+		return -1;
+	}
 	return debug_qnx_read_at (buf, count, addr);
 }
 
@@ -135,19 +144,8 @@ static int __close (RIODesc *fd) {
 	return -1;
 }
 
-static int __system (RIO *io, RIODesc *fd, const char *cmd) {
-	//printf("ptrace io command (%s)\n", cmd);
-	/* XXX ugly hack for testing purposes */
-	if (!strcmp (cmd, "help")) {
-		eprintf ("Usage: =!cmd args\n"
-			 " =!pid      - show targeted pid\n");
-	} else if (!strncmp (cmd, "pid", 3)) {
-		int pid = 1234;
-		io->cb_printf ("%d\n", pid);
-		return pid;
-	} else
-		eprintf ("Try: '=!pid'\n");
-	return true;
+static char *__system (RIO *io, RIODesc *fd, const char *cmd) {
+	return NULL;
 }
 
 RIOPlugin r_io_plugin_qnx = {
@@ -158,7 +156,16 @@ RIOPlugin r_io_plugin_qnx = {
 	.close = __close,
 	.read = __read,
 	.write = __write,
-	.plugin_open = __plugin_open,
+	.check = __plugin_open,
 	.lseek = __lseek,
 	.system = __system,
-	.isdbg = true};
+	.isdbg = true
+};
+
+#ifndef CORELIB
+R_API RLibStruct radare_plugin = {
+	.type = R_LIB_TYPE_IO,
+	.data = &r_io_plugin_qnx,
+	.version = R2_VERSION
+};
+#endif

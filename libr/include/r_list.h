@@ -3,12 +3,10 @@
 
 #include <r_types.h>
 #include <r_flist.h>
-
+#include <sdb.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// TODO: implement r_list_foreach_prev
 
 #ifndef _INCLUDE_R_LIST_HEAD_H_
 #define _INCLUDE_R_LIST_HEAD_H_
@@ -23,7 +21,15 @@ typedef struct r_list_t {
 	RListIter *head;
 	RListIter *tail;
 	RListFree free;
+	int length;
+	bool sorted;
 } RList;
+
+typedef struct r_list_range_t {
+	SdbHt *h;
+	RList *l;
+	//RListComparator c;
+} RListRange;
 
 typedef int (*RListComparator)(const void *a, const void *b);
 
@@ -38,19 +44,25 @@ typedef struct r_oflist_t {
 //#define R_LIST_NEW(x,y) x=r_list_new();x->free=(RListFree)y
 #define r_list_foreach(list, it, pos)\
 	if (list)\
-		for (it = list->head; it && (pos = it->data); it = it->n)
+		for (it = list->head; it && (pos = it->data, 1); it = it->n)
+#define r_list_foreach_iter(list, it)\
+	if (list)\
+		for (it = list->head; it; it = it->n)
 /* Safe when calling r_list_delete() while iterating over the list. */
 #define r_list_foreach_safe(list, it, tmp, pos)\
 	if (list)\
-		for (it = list->head; it && (pos = it->data) && ((tmp = it->n) || 1); it = tmp)
+		for (it = list->head; it && (pos = it->data, tmp = it->n, 1); it = tmp)
 #define r_list_foreach_prev(list, it, pos)\
 	if (list)\
-		for (it = list->tail; it && (pos = it->data); it = it->p)
+		for (it = list->tail; it && (pos = it->data, 1); it = it->p)
+#define r_list_foreach_prev_safe(list, it, tmp, pos) \
+	for (it = list->tail; it && (pos = it->data, tmp = it->p, 1); it = tmp)
 #ifndef _R_LIST_C_
 #define r_list_push(x, y) r_list_append (x, y)
 #define r_list_iterator(x) (x)? (x)->head: NULL
-#define r_list_empty(x) (x == NULL || (x->head == NULL && x->tail == NULL))
-#define r_list_head(x) x->head
+// #define r_list_empty(x) (!x || (!(x->head) && !(x->tail)))
+#define r_list_empty(x) (!(x) || !(x)->length)
+#define r_list_head(x) ((x)? (x)->head: NULL)
 #define r_list_tail(x) x->tail
 
 #define r_list_iter_get(x)\
@@ -63,7 +75,6 @@ typedef struct r_oflist_t {
 #endif
 R_API RList *r_list_new(void);
 R_API RList *r_list_newf(RListFree f);
-//R_API void r_list_iter_free (RListIter *x);
 R_API RListIter *r_list_iter_get_next(RListIter *list);
 R_API int r_list_set_n(RList *list, int n, void *p);
 R_API void *r_list_iter_get_data(RListIter *list);
@@ -74,6 +85,9 @@ R_API int r_list_length(const RList *list);
 R_API void *r_list_first(const RList *list);
 R_API RListIter *r_list_add_sorted(RList *list, void *data, RListComparator cmp);
 R_API void r_list_sort(RList *list, RListComparator cmp);
+R_API RList *r_list_uniq(const RList *list, RListComparator cmp);
+R_API void r_list_merge_sort(RList *list, RListComparator cmp);
+R_API void r_list_insertion_sort(RList *list, RListComparator cmp);
 
 R_API void r_list_init(RList *list);
 R_API void r_list_delete(RList *list, RListIter *iter);
@@ -95,9 +109,6 @@ R_API void r_list_reverse(RList *list);
 R_API RList *r_list_clone(RList *list);
 
 /* hashlike api */
-R_API void *r_list_get_by_int(const RList *list, int off, int n);
-R_API void *r_list_get_by_int64(const RList *list, int off, ut64 n);
-R_API void *r_list_get_by_string(const RList *list, int off, const char *str);
 R_API RListIter *r_list_contains(const RList *list, const void *p);
 R_API RListIter *r_list_find(const RList *list, const void *p, RListComparator cmp);
 

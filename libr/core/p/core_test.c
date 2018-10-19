@@ -20,7 +20,7 @@ mv core_test.so ~/.config/radare2/plugins
 
 static int r_cmd_test_call() {
 	eprintf ("Dummy!\n");
-	return R_FALSE;
+	return false;
 }
 
 RCorePlugin r_core_plugin_test = {
@@ -31,7 +31,7 @@ RCorePlugin r_core_plugin_test = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_CORE,
 	.data = &r_core_plugin_test,
 	.version = R2_VERSION

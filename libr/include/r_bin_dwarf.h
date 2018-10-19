@@ -622,7 +622,7 @@ typedef union {
 	ut64	data;
 	st64	sdata;
 	ut64	reference;
-	struct str_structt {
+	struct {
 		char	*string;
 		ut64	offset;
 	} str_struct;
@@ -677,7 +677,7 @@ typedef struct {
 	RBinDwarfAttrSpec *specs;
 } RBinDwarfAbbrevDecl;
 
-#define DEBUG_ABBREV_CAP	16
+#define DEBUG_ABBREV_CAP	32
 
 typedef struct {
 	size_t length;

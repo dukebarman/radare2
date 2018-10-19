@@ -6,48 +6,42 @@
 	<meta name="language" content="en" />
 
 	<title>radare2</title>
-	<!--polyfill for joint.js-->
-	<script>
-		SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformToElement || function(toElement) {
-			return toElement.getScreenCTM().inverse().multiply(this.getScreenCTM());
-		};
-	</script>
 
-	<link rel="stylesheet" type="text/css" href="./lib/css/layout-default-latest.css" />
-	<link rel="stylesheet" type="text/css" href="./lib/css/jquery.ui.tabs.css" />
-	<link rel="stylesheet" type="text/css" href="./lib/css/jquery-ui.css" />
-	<link rel="stylesheet" type="text/css" href="../enyo/disasm.css" />
-	<link rel="stylesheet" type="text/css" href="../enyo/joint.min.css" />
-	<link rel="stylesheet" type="text/css" href="./lib/css/tree.jquery.css" />
-	<link rel="stylesheet" type="text/css" href="./lib/css/main.css" />
-	<link rel="stylesheet" type="text/css" href="./lib/css/jquery.onoff.css" />
+	<link rel="stylesheet" type="text/css" href="./vendors/layout-default-latest.css" />
+	<link rel="stylesheet" type="text/css" href="./vendors/joint.min.css" />
+	<link rel="stylesheet" type="text/css" href="./vendors/jquery.onoff.css" />
 
-	<script type="text/javascript" src="../enyo/js/joint.js"></script>
-	<script type="text/javascript" src="../enyo/js/joint.layout.DirectedGraph.js"></script>
-	<script type="text/javascript" src="../enyo/js/r2.js"></script>
-	<script type="text/javascript" src="../enyo/js/r2ui.js"></script>
-	<script type="text/javascript" src="../enyo/js/disasm.js"></script>
-<!--
-	<script type="text/javascript" src="index.js"></script>
--->
-	<script type="text/javascript" src="./lib/js/jquery-1.9.0.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery-ui-latest.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.onoff.js"></script>
-	<script type="text/javascript" src="./lib/js/taphold.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.ui-contextmenu.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.layout-latest.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.donetyping.js"></script>
-	<script type="text/javascript" src="./lib/js/tree.jquery.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.layout.resizePaneAccordions-latest.js"></script>
-	<script type="text/javascript" src="./lib/js/jquery.scrollTo-latest.js"></script>
-	<script type="text/javascript" src="./lib/js/disasm_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/entropy_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/strings_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/hex_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/settings_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/projects_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/types_panel.js"></script>
-	<script type="text/javascript" src="./lib/js/main.js"></script>
+	<link rel="stylesheet" type="text/css" href="./r2core.css" />
+	<link rel="stylesheet" type="text/css" href="./dependencies.css" />
+
+	<!-- jQuery -->
+	<script type="text/javascript" src="./vendors/jquery.min.js"></script>
+	<script type="text/javascript" src="./vendors/jquery.scrollTo.min.js"></script>
+	<script type="text/javascript" src="./vendors/jquery.layout-latest.min.js"></script> <!-- Resize pane -->
+	<script type="text/javascript" src="./vendors/jquery-ui.min.js"></script>
+	<script type="text/javascript" src="./vendors/jquery.ui-contextmenu.min.js"></script>
+	<script type="text/javascript" src="./vendors/jquery.onoff.min.js"></script>
+
+	<!-- Other dependencies -->
+	<script type="text/javascript" src="./dependencies.js"></script> <!-- Not reachable with bower -->
+
+	<!-- Panels -->
+	<script type="text/javascript" src="./panels.js"></script>
+
+	<!-- Joint dependencies -->
+	<script type="text/javascript" src="./vendors/lodash.min.js"></script>
+	<script type="text/javascript" src="./vendors/backbone-min.js"></script>
+	<script type="text/javascript" src="./vendors/joint.min.js"></script>
+
+	<script type="text/javascript" src="./vendors/graphlib.core.js"></script>
+	<script type="text/javascript" src="./vendors/dagre.core.js"></script>
+	<script type="text/javascript" src="./vendors/joint.layout.DirectedGraph.min.js"></script>
+
+	<!-- R2 Core -->
+	<script type="text/javascript" src="./r2core.js"></script>
+
+	<!-- Main -->
+	<script type="text/javascript" src="./main.js"></script>
 </head>
 <body>
 
@@ -70,14 +64,16 @@
 		<li><a href="#entropy_tab"><span>Entropy</span></a></li>
 		<li><a href="#types_tab"><span>Types</span></a></li>
 		<li><a href="#settings_tab"><span>Settings</span></a></li>
+		<li><a href="#logs_tab"><span>Logs</span></a></li>
 		<li><a href="#projects_tab"><span>Projects</span></a></li>
 	</ul>
-	<div id="center_panel" class="ui-layout-content ui-widget-content ui-corner-bottom" style="border-top: 0; padding-bottom: 1em;">
+	<div id="center_panel" class="ui-layout-content ui-widget-content ui-corner-bottom" style="border-top: 0; padding-bottom: 0em;">
 		<div id="disasm_tab"></div>
 		<div id="hex_tab" style="background-color:rgb(20,20,20);"></div>
 		<div id="strings_tab" style="background-color:rgb(20,20,20);"></div>
 		<div id="entropy_tab" style="background-color:rgb(20,20,20);"></div>
 		<div id="settings_tab" style="background-color:rgb(20,20,20);"></div>
+		<div id="logs_tab"></div>
 		<div id="projects_tab" style="background-color:rgb(20,20,20);"></div>
 		<div id="types_tab" style="background-color:rgb(20,20,20);"></div>
 	</div>

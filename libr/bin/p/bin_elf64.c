@@ -1,32 +1,36 @@
-/* radare - LGPL - Copyright 2009-2015 - pancake, nibble */
+/* radare - LGPL - Copyright 2009-2017 - pancake, nibble */
 
 #define R_BIN_ELF64 1
-#include "bin_elf.c"
+#include "bin_elf.inc"
 
-static int check(RBinFile *arch);
-static int check_bytes(const ut8 *buf, ut64 length);
-
-static int check(RBinFile *arch) {
-	const ut8 *bytes = arch ? r_buf_buffer (arch->buf) : NULL;
-	ut64 sz = arch ? r_buf_size (arch->buf): 0;
-	return check_bytes (bytes, sz);
-}
-
-static int check_bytes(const ut8 *buf, ut64 length) {
-	if (buf && length >= 5)
-		if (!memcmp (buf, "\x7F\x45\x4c\x46\x02", 5))
+static bool check_bytes(const ut8 *buf, ut64 length) {
+	if (buf && length >= 5) {
+		if (!memcmp (buf, "\x7F\x45\x4c\x46\x02", 5)) {
 			return true;
+		}
+	}
 	return false;
 }
 
 extern struct r_bin_dbginfo_t r_bin_dbginfo_elf64;
 extern struct r_bin_write_t r_bin_write_elf64;
 
-static ut64 get_elf_vaddr64 (RBinFile *arch, ut64 baddr, ut64 paddr, ut64 vaddr) {
+static ut64 get_elf_vaddr64 (RBinFile *bf, ut64 baddr, ut64 paddr, ut64 vaddr) {
 	//NOTE(aaSSfxxx): since RVA is vaddr - "official" image base, we just need to add imagebase to vaddr
-	struct Elf_(r_bin_elf_obj_t)* obj = arch->o->bin_obj;
+	struct Elf_(r_bin_elf_obj_t)* obj = bf->o->bin_obj;
 	return obj->baddr - obj->boffset + vaddr;
+}
 
+static void headers64(RBinFile *bf) {
+#define p bf->rbin->cb_printf
+	const ut8 *buf = r_buf_get_at (bf->buf, 0, NULL);
+	p ("0x00000000  ELF64       0x%08x\n", r_read_le32 (buf));
+	p ("0x00000010  Type        0x%04x\n", r_read_le16 (buf + 0x10));
+	p ("0x00000012  Machine     0x%04x\n", r_read_le16 (buf + 0x12));
+	p ("0x00000014  Version     0x%08x\n", r_read_le32 (buf + 0x14));
+	p ("0x00000018  Entrypoint  0x%08"PFMT64x"\n", r_read_le64 (buf + 0x18));
+	p ("0x00000020  PhOff       0x%08"PFMT64x"\n", r_read_le64 (buf + 0x20));
+	p ("0x00000028  ShOff       0x%08"PFMT64x"\n", r_read_le64 (buf + 0x28));
 }
 
 static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data, int datalen) {
@@ -38,12 +42,12 @@ static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data,
 	ut64 baddr = 0x400000LL;
 	RBuffer *buf = r_buf_new ();
 
-#define B(x,y) r_buf_append_bytes(buf,(const ut8*)x,y)
+#define B(x,y) r_buf_append_bytes(buf,(const ut8*)(x),y)
 #define Q(x) r_buf_append_ut64(buf,x)
 #define D(x) r_buf_append_ut32(buf,x)
 #define H(x) r_buf_append_ut16(buf,x)
 #define Z(x) r_buf_append_nbytes(buf,x)
-#define W(x,y,z) r_buf_write_at(buf,x,(const ut8*)y,z)
+#define W(x,y,z) r_buf_write_at(buf,x,(const ut8*)(y),z)
 
 	/* Ehdr */
 	B ("\x7F" "ELF" "\x02\x01\x01\x00", 8); // e_ident (ei_class = ELFCLASS64)
@@ -70,7 +74,7 @@ static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data,
 	p_phdr = buf->length;
 	D (1);  // p_type
 	D (5);  // p_flags = PF_R | PF_X
-	Q (0);  // p_offset 
+	Q (0);  // p_offset
 	p_vaddr = buf->length;
 	Q (-1); // p_vaddr = 0xFFFFFFFF
 	p_paddr = buf->length;
@@ -117,8 +121,8 @@ RBinPlugin r_bin_plugin_elf64 = {
 	.get_sdb = &get_sdb,
 	.load = &load,
 	.load_bytes = &load_bytes,
+	.load_buffer= &load_buffer,
 	.destroy = &destroy,
-	.check = &check,
 	.check_bytes = &check_bytes,
 	.baddr = &baddr,
 	.boffset = &boffset,
@@ -130,6 +134,7 @@ RBinPlugin r_bin_plugin_elf64 = {
 	.minstrlen = 4,
 	.info = &info,
 	.fields = &fields,
+	.header = &headers64,
 	.size = &size,
 	.libs = &libs,
 	.relocs = &relocs,
@@ -138,10 +143,13 @@ RBinPlugin r_bin_plugin_elf64 = {
 	.create = &create,
 	.write = &r_bin_write_elf64,
 	.get_vaddr = &get_elf_vaddr64,
+	.file_type = &get_file_type,
+	.regstate = &regstate,
+	.maps = &maps,
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_elf64,
 	.version = R2_VERSION

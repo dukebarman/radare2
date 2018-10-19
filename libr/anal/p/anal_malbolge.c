@@ -1,11 +1,13 @@
+/* radare - LGPL - Copyright 2015 - condret */
+
 #include <r_anal.h>
 #include <r_types.h>
 #include <r_lib.h>
 
 static int mal_anal(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int len) {
-	memset(op, '\0', sizeof(RAnalOp));
+	memset (op, '\0', sizeof (RAnalOp));
 	if (len) {
-		switch ((data[0]+addr)%94) {
+		switch ((data[0] + addr) % 94) {
 		case 4:
 			op->type = R_ANAL_OP_TYPE_UJMP;
 			break;
@@ -32,10 +34,10 @@ static int mal_anal(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int le
 		}
 		return op->size = 1;
 	}
-	return R_FALSE;
+	return false;
 }
 
-struct r_anal_plugin_t r_anal_plugin_malbolge = {
+RAnalPlugin r_anal_plugin_malbolge = {
 	.name = "malbolge",
 	.desc = "Malbolge analysis plugin",
 	.arch = "malbolge",
@@ -45,7 +47,7 @@ struct r_anal_plugin_t r_anal_plugin_malbolge = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_malbolge,
 	.version = R2_VERSION

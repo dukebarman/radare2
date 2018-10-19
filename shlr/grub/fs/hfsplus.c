@@ -29,30 +29,34 @@
 #include <grub/fshelp.h>
 #include <grub/hfs.h>
 #include <grub/charset.h>
+#include <r_util.h>
 
 #define GRUB_HFSPLUS_MAGIC 0x482B
 #define GRUB_HFSPLUSX_MAGIC 0x4858
 #define GRUB_HFSPLUS_SBLOCK 2
 
 /* A HFS+ extent.  */
+R_PACKED (
 struct grub_hfsplus_extent
 {
   /* The first block of a file on disk.  */
   grub_uint32_t start;
   /* The amount of blocks described by this extent.  */
   grub_uint32_t count;
-} __attribute__ ((packed));
+});
 
 /* The descriptor of a fork.  */
+R_PACKED (
 struct grub_hfsplus_forkdata
 {
   grub_uint64_t size;
   grub_uint32_t clumpsize;
   grub_uint32_t blocks;
   struct grub_hfsplus_extent extents[8];
-} __attribute__ ((packed));
+});
 
 /* The HFS+ Volume Header.  */
+R_PACKED (
 struct grub_hfsplus_volheader
 {
   grub_uint16_t magic;
@@ -69,7 +73,7 @@ struct grub_hfsplus_volheader
   struct grub_hfsplus_forkdata catalog_file;
   struct grub_hfsplus_forkdata attrib_file;
   struct grub_hfsplus_forkdata startup_file;
-} __attribute__ ((packed));
+});
 
 /* The type of node.  */
 enum grub_hfsplus_btnode_type
@@ -80,6 +84,7 @@ enum grub_hfsplus_btnode_type
     GRUB_HFSPLUS_BTNODE_TYPE_MAP = 2,
   };
 
+R_PACKED (
 struct grub_hfsplus_btnode
 {
   grub_uint32_t next;
@@ -88,9 +93,10 @@ struct grub_hfsplus_btnode
   grub_uint8_t height;
   grub_uint16_t count;
   grub_uint16_t unused;
-} __attribute__ ((packed));
+});
 
 /* The header of a HFS+ B+ Tree.  */
+R_PACKED (
 struct grub_hfsplus_btheader
 {
   grub_uint16_t depth;
@@ -107,18 +113,20 @@ struct grub_hfsplus_btheader
   grub_uint8_t btree_type;
   grub_uint8_t key_compare;
   grub_uint32_t attributes;
-} __attribute__ ((packed));
+});
 
 /* The on disk layout of a catalog key.  */
+R_PACKED (
 struct grub_hfsplus_catkey
 {
   grub_uint16_t keylen;
   grub_uint32_t parent;
   grub_uint16_t namelen;
   grub_uint16_t name[30];
-} __attribute__ ((packed));
+});
 
 /* The on disk layout of an extent overflow file key.  */
+R_PACKED (
 struct grub_hfsplus_extkey
 {
   grub_uint16_t keylen;
@@ -126,8 +134,9 @@ struct grub_hfsplus_extkey
   grub_uint8_t unused;
   grub_uint32_t fileid;
   grub_uint32_t start;
-} __attribute__ ((packed));
+});
 
+R_PACKED (
 struct grub_hfsplus_key
 {
   union
@@ -136,8 +145,8 @@ struct grub_hfsplus_key
     struct grub_hfsplus_catkey catkey;
     grub_uint16_t keylen;
   };
-} __attribute__ ((packed));
-
+});
+R_PACKED (
 struct grub_hfsplus_catfile
 {
   grub_uint16_t type;
@@ -151,7 +160,7 @@ struct grub_hfsplus_catfile
   grub_uint8_t unused3[44];
   struct grub_hfsplus_forkdata data;
   struct grub_hfsplus_forkdata resource;
-} __attribute__ ((packed));
+});
 
 /* Filetype information as used in inodes.  */
 #define GRUB_HFSPLUS_FILEMODE_MASK	0170000
@@ -251,7 +260,7 @@ grub_hfsplus_btree_recoffset (struct grub_hfsplus_btree *btree,
   grub_uint16_t *recptr;
   recptr = (grub_uint16_t *) (&cnode[btree->nodesize
 				     - index * sizeof (grub_uint16_t) - 2]);
-  return grub_be_to_cpu16 (*recptr);
+  return recptr? grub_be_to_cpu16 (*recptr): 0;
 }
 
 /* Return a pointer to the record with the index INDEX, in the node
@@ -602,6 +611,9 @@ grub_hfsplus_btree_iterate_node (struct grub_hfsplus_btree *btree,
     {
       char *cnode = (char *) first_node;
 
+      if (!first_node) {
+        return 0;
+      }
       /* Iterate over all records in this node.  */
       for (rec = first_rec; rec < grub_be_to_cpu16 (first_node->count); rec++)
 	{
@@ -985,8 +997,8 @@ grub_hfsplus_dir (grub_device_t device, const char *path,
 
 
 static grub_err_t
-grub_hfsplus_label (grub_device_t device __attribute__((unused))
-		    , char **label __attribute__((unused)))
+grub_hfsplus_label (grub_device_t device 
+		    , char **label)
 {
   /* XXX: It's not documented how to read a label.  */
   return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
@@ -1028,7 +1040,7 @@ grub_hfsplus_uuid (grub_device_t device, char **uuid)
   data = grub_hfsplus_mount (disk);
   if (data)
     {
-      *uuid = grub_xasprintf ("%016llx",
+      *uuid = grub_xasprintf ("%016"PFMT64x,
 			     (unsigned long long)
 			     grub_be_to_cpu64 (data->volheader.num_serial));
     }

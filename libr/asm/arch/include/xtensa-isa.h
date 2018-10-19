@@ -21,6 +21,8 @@
 #ifndef XTENSA_LIBISA_H
 #define XTENSA_LIBISA_H
 
+#include "r_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -488,7 +490,7 @@ xtensa_operand_get_field (xtensa_isa isa, xtensa_opcode opc, int opnd,
 			  xtensa_format fmt, int slot,
 			  const xtensa_insnbuf slotbuf, uint32 *valp);
 
-extern int 
+extern int
 xtensa_operand_set_field (xtensa_isa isa, xtensa_opcode opc, int opnd,
 			  xtensa_format fmt, int slot,
 			  xtensa_insnbuf slotbuf, uint32 val);

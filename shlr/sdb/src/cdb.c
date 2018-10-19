@@ -1,33 +1,35 @@
-/* Public domain - author D. J. Bernstein, modified by pancake - 2014-2015 */
-#include <stdio.h>
+/* Public domain - author D. J. Bernstein, modified by pancake - 2014-2016 */
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "cdb.h"
-
 #if USE_MMAN
 #include <sys/mman.h>
 #endif
 
 /* XXX: this code must be rewritten . too slow */
-int cdb_getkvlen(int fd, ut32 *klen, ut32 *vlen) {
-	ut8 buf[4] = {0};
+bool cdb_getkvlen(struct cdb *c, ut32 *klen, ut32 *vlen, ut32 pos) {
+	ut8 buf[4] = { 0 };
 	*klen = *vlen = 0;
-	if (fd == -1 || read (fd, buf, sizeof (buf)) != sizeof (buf))
-		return 0;
+	if (!cdb_read (c, (char *)buf, sizeof (buf), pos)) {
+		return false;
+	}
 	*klen = (ut32)buf[0];
-	*vlen = (ut32)(buf[1] | ((ut32)buf[2]<<8) | ((ut32)buf[3]<<16));
+	*vlen = (ut32)(buf[1] | ((ut32)buf[2] << 8) | ((ut32)buf[3] << 16));
 	if (*vlen > CDB_MAX_VALUE) {
 		*vlen = CDB_MAX_VALUE; // untaint value for coverity
-		return 0;
+		return false;
 	}
-	return 1;
+	return true;
 }
 
 void cdb_free(struct cdb *c) {
-	if (!c->map) return;
+	if (!c->map) {
+		return;
+	}
 #if USE_MMAN
-	munmap (c->map, c->size);
+	(void)munmap (c->map, c->size);
 #else
 	free (c->map);
 #endif
@@ -36,69 +38,90 @@ void cdb_free(struct cdb *c) {
 
 void cdb_findstart(struct cdb *c) {
 	c->loop = 0;
+#if !USE_MMAN
+	if (c->fd != -1) {
+		lseek (c->fd, 0, SEEK_SET);
+	}
+#endif
 }
 
-int cdb_init(struct cdb *c, int fd) {
+bool cdb_init(struct cdb *c, int fd) {
 	struct stat st;
-	c->map = NULL;
+	if (fd != c->fd && c->fd != -1) {
+		close (c->fd);
+	}
 	c->fd = fd;
 	cdb_findstart (c);
-	if (fd != -1 && !fstat (fd, &st) && st.st_size>4 && st.st_size != (off_t)UT64_MAX) {
+	if (fd != -1 && !fstat (fd, &st) && st.st_size > 4 && st.st_size != (off_t)UT64_MAX) {
 #if USE_MMAN
 		char *x = mmap (0, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-		if (!x) {
+		if (x == MAP_FAILED) {
 			eprintf ("Cannot mmap %d\n", (int)st.st_size);
-			return 0;
+			return false;
 		}
 #else
 		char *x = calloc (1, st.st_size);
 		if (!x) {
 			eprintf ("Cannot malloc %d\n", (int)st.st_size);
-			return 0;
+			return false;
 		}
-		read (fd, x, st.st_size); // TODO: handle return value
+		/* TODO: read by chunks instead of a big huge syscall */
+		if (read (fd, x, st.st_size) != st.st_size) {
+			/* handle read error */
+		}
 #endif
-		if (x + 1) {
-			c->size = st.st_size;
-			c->map = x;
+#if USE_MMAN
+		if (c->map) {
+			munmap (c->map, c->size);
 		}
-		return 1;
+#else
+		free (c->map);
+#endif
+		c->map = x;
+		c->size = st.st_size;
+		return true;
 	}
 	c->map = NULL;
 	c->size = 0;
-	return 0;
+	return false;
 }
 
-int cdb_read(struct cdb *c, char *buf, ut32 len, ut32 pos) {
+bool cdb_read(struct cdb *c, char *buf, ut32 len, ut32 pos) {
 	if (c->map) {
-		if ((pos > c->size) || (c->size - pos < len))
-			return 0;
+		if ((pos > c->size) || (c->size - pos < len)) {
+			return false;
+		}
+		if (!buf) {
+			return false;
+		}
 		memcpy (buf, c->map + pos, len);
-		return 1;
+		return true;
 	}
-	if (!seek_set (c->fd, pos))
-		return 0;
+	if (c->fd == -1 || !seek_set (c->fd, pos)) {
+		return false;
+	}
 	while (len > 0) {
-		ssize_t r;
-		memset (buf, 0, len);
-		r = read (c->fd, buf, len);
-		if (r == -1) return 0;
-		if ((ut32)r != len) return 0;
+		int r = (int)read (c->fd, buf, len);
+		if (r < 1 || (ut32)r != len) {
+			return false;
+		}
 		buf += r;
 		len -= r;
 	}
-	return 1;
+	return true;
 }
 
 static int match(struct cdb *c, const char *key, ut32 len, ut32 pos) {
 	char buf[32];
 	const size_t szb = sizeof buf;
 	while (len > 0) {
-		int n = (szb>len)? len: szb;
-		if (!cdb_read (c, buf, n, pos))
+		int n = (szb > len)? len: szb;
+		if (!cdb_read (c, buf, n, pos)) {
 			return -1;
-		if (memcmp (buf, key, n))
+		}
+		if (memcmp (buf, key, n)) {
 			return 0;
+		}
 		pos += n;
 		key += n;
 		len -= n;
@@ -110,23 +133,30 @@ int cdb_findnext(struct cdb *c, ut32 u, const char *key, ut32 len) {
 	char buf[8];
 	ut32 pos;
 	int m;
-	if (c->fd == -1) return -1;
+	len++;
+	if (c->fd == -1) {
+		return -1;
+	}
 	c->hslots = 0;
 	if (!c->loop) {
-		int bufsz = ((u+1) & 0xFF) ? sizeof (buf) : sizeof (buf) / 2;
-		if (!cdb_read (c, buf, bufsz, (u << 2) & 1023))
+		const int bufsz = ((u + 1) & 0xFF) ? sizeof (buf) : sizeof (buf) / 2;
+		if (!cdb_read (c, buf, bufsz, (u << 2) & 1023)) {
 			return -1;
-
+		}
 		/* hslots = (hpos_next - hpos) / 8 */
 		ut32_unpack (buf, &c->hpos);
-		if (bufsz == sizeof (buf))
-			ut32_unpack (buf+4, &pos);
-		else pos = c->size;
-
-		if (pos < c->hpos) return -1;
+		if (bufsz == sizeof (buf)) {
+			ut32_unpack (buf + 4, &pos);
+		} else {
+			pos = c->size;
+		}
+		if (pos < c->hpos) {
+			return -1;
+		}
 		c->hslots = (pos - c->hpos) / (2 * sizeof (ut32));
-		if (!c->hslots) return 0;
-
+		if (!c->hslots) {
+			return 0;
+		}
 		c->khash = u;
 		u = ((u >> 8) % c->hslots) << 3;
 		c->kpos = c->hpos + u;
@@ -136,25 +166,23 @@ int cdb_findnext(struct cdb *c, ut32 u, const char *key, ut32 len) {
 			return 0;
 		}
 		ut32_unpack (buf + 4, &pos);
-		if (!pos) return 0;
+		if (!pos) {
+			return 0;
+		}
 		c->loop++;
 		c->kpos += sizeof (buf);
-		if (c->kpos == c->hpos + (c->hslots << 3))
+		if (c->kpos == c->hpos + (c->hslots << 3)) {
 			c->kpos = c->hpos;
+		}
 		ut32_unpack (buf, &u);
 		if (u == c->khash) {
-			if (!seek_set (c->fd, pos)) {
-				return -1;
-			}
-			if (!cdb_getkvlen (c->fd, &u, &c->dlen)) {
-				return -1;
-			}
-			if (u == 0) {
+			if (!cdb_getkvlen (c, &u, &c->dlen, pos) || !u) {
 				return -1;
 			}
 			if (u == len) {
-				if ((m = match (c, key, len, pos + KVLSZ))==-1)
+				if ((m = match (c, key, len, pos + KVLSZ)) == -1) {
 					return 0;
+				}
 				if (m == 1) {
 					c->dpos = pos + KVLSZ + len;
 					return 1;

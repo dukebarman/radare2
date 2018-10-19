@@ -28,7 +28,7 @@ static int hook_reg_read(RAnalEsil *esil, const char *name, ut64 *res, int *size
 	return 0;
 }
 
-static int hook_reg_write(RAnalEsil *esil, const char *name, ut64 val) {
+static int hook_reg_write(RAnalEsil *esil, const char *name, ut64 *val) {
 	sdb_array_add (esil->stats, "reg.write", name, 0);
 	return 0;
 }
@@ -48,9 +48,11 @@ R_API void r_anal_esil_mem_ro(RAnalEsil *esil, int mem_readonly) {
 
 R_API void r_anal_esil_stats(RAnalEsil *esil, int enable) {
 	if (enable) {
-		if (esil->stats) 
+		if (esil->stats) {
 			sdb_reset (esil->stats);
-		else esil->stats = sdb_new0();
+		} else {
+			esil->stats = sdb_new0 ();
+		}
 		// reset sdb->stats
 		esil->cb.hook_reg_read = hook_reg_read;
 		esil->cb.hook_mem_read = hook_mem_read;

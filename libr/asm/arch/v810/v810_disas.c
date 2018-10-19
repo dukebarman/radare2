@@ -160,14 +160,14 @@ static int decode_imm_reg(const ut16 instr, struct v810_cmd *cmd) {
 	case V810_MOV_IMM5:
 	case V810_ADD_IMM5:
 	case V810_CMP_IMM5:
-		snprintf (cmd->operands, V810_INSTR_MAXLEN - 1, "%hhd, r%u",
+		snprintf (cmd->operands, V810_INSTR_MAXLEN - 1, "%d, r%u",
 				(st8)SEXT5(immed), REG2(instr));
 		break;
 	case V810_LDSR:
 	case V810_STSR:
 		if (immed > 0x19 || (immed > 0x7 && immed < 0x18)) {
-			snprintf (cmd->operands, V810_INSTR_MAXLEN - 1, "s%hhu, r%u",
-					immed, REG2(instr));
+			snprintf (cmd->operands, V810_INSTR_MAXLEN - 1, "s%u, r%u",
+					  (ut8)immed, REG2(instr));
 		} else if (sysreg_names[immed]) {
 			snprintf (cmd->operands, V810_INSTR_MAXLEN - 1, "%s, r%u",
 					sysreg_names[immed], REG2(instr));
@@ -271,9 +271,10 @@ static int decode_bit_op(const ut16 instr, struct v810_cmd *cmd) {
 }
 
 static int decode_extended(const ut16 word1, const ut16 word2, struct v810_cmd *cmd) {
-	ut8 subop = OPCODE(word2)>>2;
-	if (subop > 0xC)
+	ut8 subop = OPCODE(word2);
+	if (subop > 0xC) {
 		return -1;
+	}
 
 	snprintf (cmd->instr, V810_INSTR_MAXLEN - 1, "%s",
 			ext_instrs[subop]);
@@ -310,8 +311,9 @@ int v810_decode_command(const ut8 *instr, int len, struct v810_cmd *cmd) {
 	ut16 word2 = 0;
 
 	word1 = r_read_le16 (instr);
-	if (len >= 4)
+	if (len >= 4) {
 		word2 = r_read_le16 (instr + 2);
+	}
 
 	switch (OPCODE(word1)) {
 	case V810_MOV:
@@ -389,8 +391,9 @@ int v810_decode_command(const ut8 *instr, int len, struct v810_cmd *cmd) {
 		}
 	}
 
-	if ((ret > 0) && (len < ret))
+	if ((ret > 0) && (len < ret)) {
 		ret = -1;
+	}
 
 	return ret;
 }

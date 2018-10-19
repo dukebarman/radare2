@@ -4,6 +4,12 @@ MAKE=make
 gmake --help >/dev/null 2>&1
 [ $? = 0 ] && MAKE=gmake
 
+${MAKE} --help 2>&1 | grep -q gnu
+if [ $? != 0 ]; then
+	echo "You need GNU Make to build me"
+	exit 1
+fi
+
 export MAKE="$MAKE"
 
 [ -z "${INSTALL_TARGET}" ] && INSTALL_TARGET=symstall
@@ -21,12 +27,30 @@ if [ "$1" != "--without-pull" ]; then
 		fi
 	fi
 else
+	export WITHOUT_PULL=1
 	shift
 fi
 
-type sudo || NOSUDO=1
-[ "$(id -u)" = 0 ] || SUDO=sudo
-[ -n "${NOSUDO}" ] && SUDO=
+umask 0002
+
+export NOSUDO
+if [ -n "${NOSUDO}" ]; then
+	SUDO=""
+else
+	type sudo > /dev/null 2>&1 || NOSUDO=1
+	SUDO=sudo
+	[ -n "${NOSUDO}" ] && SUDO=
+fi
+
+if [ "$(id -u)" = 0 ]; then
+	SUDO=""
+else
+	[ -n "${NOSUDO}" ] && SUDO="echo NOTE: sudo not found. Please run as root: "
+fi
+
+if [ "${USE_SU}" = 1 ]; then
+	SUDO="/bin/su -m root -c"
+fi
 
 if [ "${M32}" = 1 ]; then
 	./sys/build-m32.sh $* && ${SUDO} ${MAKE} ${INSTALL_TARGET}

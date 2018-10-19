@@ -130,7 +130,7 @@ static char nuls[10];		/* place to point scanner in event of error */
 #define	EMIT(op, sopnd)	doemit(p, (sop)(op), (size_t)(sopnd))
 #define	INSERT(op, pos)	doinsert(p, (sop)(op), HERE()-(pos)+1, pos)
 #define	AHEAD(pos)		dofwd(p, pos, HERE()-(pos))
-#define	ASTERN(sop, pos)	EMIT(sop, HERE()-pos)
+#define	ASTERN(sop, pos)	EMIT(sop, HERE()-(pos))
 #define	HERE()		(p->slen)
 #define	THERE()		(p->slen - 1)
 #define	THERETHERE()	(p->slen - 2)
@@ -160,43 +160,67 @@ R_API int r_regex_match (const char *pattern, const char *flags, const char *tex
 R_API RRegex *r_regex_new (const char *pattern, const char *flags) {
 	RRegex rx, *r;
 	memset(&rx, 0, sizeof(RRegex));
-	if (r_regex_comp (&rx, pattern, r_regex_flags (flags)))
+	if (r_regex_comp (&rx, pattern, r_regex_flags (flags))) {
 		return NULL;
-	r = malloc (sizeof (RRegex));
+	}
+	r = R_NEW (RRegex);
+	if (!r) {
+		return NULL;
+	}
 	memcpy (r, &rx, sizeof (RRegex));
 	return r;
 }
 
 R_API int r_regex_flags(const char *f) {
 	int flags = 0;
-	if (!f||!*f) return 0;
-	if (strchr (f, 'e')) flags |= R_REGEX_EXTENDED;
-	if (strchr (f, 'i')) flags |= R_REGEX_ICASE;
-	if (strchr (f, 's')) flags |= R_REGEX_NOSUB;
-	if (strchr (f, 'n')) flags |= R_REGEX_NEWLINE;
-	if (strchr (f, 'N')) flags |= R_REGEX_NOSPEC;
-	if (strchr (f, 'p')) flags |= R_REGEX_PEND;
-	if (strchr (f, 'd')) flags |= R_REGEX_DUMP;
+	if (!f || !*f) {
+		return 0;
+	}
+	if (strchr (f, 'e')) {
+		flags |= R_REGEX_EXTENDED;
+	}
+	if (strchr (f, 'i')) {
+		flags |= R_REGEX_ICASE;
+	}
+	if (strchr (f, 's')) {
+		flags |= R_REGEX_NOSUB;
+	}
+	if (strchr (f, 'n')) {
+		flags |= R_REGEX_NEWLINE;
+	}
+	if (strchr (f, 'N')) {
+		flags |= R_REGEX_NOSPEC;
+	}
+	if (strchr (f, 'p')) {
+		flags |= R_REGEX_PEND;
+	}
+	if (strchr (f, 'd')) {
+		flags |= R_REGEX_DUMP;
+	}
 	return flags;
 }
 
 R_API void r_regex_fini(RRegex *preg) {
 	struct re_guts *g;
-
-	if (preg->re_magic != MAGIC1)	/* oops */
+	if (!preg) {
+		return;
+	}
+	if (preg->re_magic != MAGIC1) {	/* oops */
 		return;			/* nice to complain, but hard */
+	}
 
 	g = preg->re_g;
-	if (g == NULL || g->magic != MAGIC2)	/* oops again */
+	if (!g || g->magic != MAGIC2) { /* oops again */
 		return;
+	}
 	preg->re_magic = 0;		/* mark it invalid */
 	g->magic = 0;			/* mark it invalid */
 
-	free(g->strip);
-	free(g->sets);
-	free(g->setbits);
-	free(g->must);
-	free(g);
+	free (g->strip);
+	free (g->sets);
+	free (g->setbits);
+	free (g->must);
+	free (g);
 }
 
 R_API void r_regex_free(RRegex *preg) {
@@ -219,32 +243,53 @@ R_API int r_regex_comp(RRegex *preg, const char *pattern, int cflags) {
 #else
 #	define	GOODFLAGS(f)	((f)&~R_REGEX_DUMP)
 #endif
-
-	cflags = GOODFLAGS(cflags);
-	if ((cflags&R_REGEX_EXTENDED) && (cflags&R_REGEX_NOSPEC))
+	cflags = GOODFLAGS (cflags);
+	if (!preg || ((cflags & R_REGEX_EXTENDED) && (cflags & R_REGEX_NOSPEC))) {
 		return R_REGEX_INVARG;
-
-	if (cflags&R_REGEX_PEND) {
-		if (preg->re_endp < pattern)
-			return(R_REGEX_INVARG);
+	}
+	if (cflags & R_REGEX_PEND) {
+		if (preg->re_endp < pattern) {
+			return R_REGEX_INVARG;
+		}
 		len = preg->re_endp - pattern;
-	} else len = strlen((char *)pattern);
-
+	} else {
+		len = strlen ((char *)pattern);
+	}
 	/* do the mallocs early so failure handling is easy */
-	g = (struct re_guts *)calloc(sizeof(struct re_guts) + (NC-1),sizeof(cat_t));
-	if (g == NULL)
+	g = (struct re_guts *)calloc (sizeof (struct re_guts) + (NC - 1), sizeof (cat_t));
+	if (!g) {
 		return R_REGEX_ESPACE;
+	}
+	/*
+	 * Limit the pattern space to avoid a 32-bit overflow on buffer
+	 * extension.  Also avoid any signed overflow in case of conversion
+	 * so make the real limit based on a 31-bit overflow.
+	 *
+	 * Likely not applicable on 64-bit systems but handle the case
+	 * generically (who are we to stop people from using ~715MB+
+	 * patterns?).
+	 */
+	size_t maxlen = ((size_t) - 1 >> 1) / sizeof (sop) * 2 / 3;
+	if (len >= maxlen) {
+		free (g);
+		return R_REGEX_ESPACE;
+	}
 	preg->re_flags = cflags;
-	p->ssize = len/(size_t)2*(size_t)3 + (size_t)1;	/* ugh */
-	p->strip = (sop *)calloc(p->ssize, sizeof(sop));
+	p->ssize = len / (size_t)2 * (size_t)3 + (size_t)1;	/* ugh */
+	if (p->ssize < len) {
+		free (g);
+		return R_REGEX_ESPACE;
+	}
+
+	p->strip = (sop *)calloc (p->ssize, sizeof (sop));
 	if (!p->strip) {
-		free((char *)g);
+		free (g);
 		return R_REGEX_ESPACE;
 	}
 	p->slen = 0;
-	if (p->strip == NULL) {
-		free((char *)g);
-		return(R_REGEX_ESPACE);
+	if (!p->strip) {
+		free (g);
+		return R_REGEX_ESPACE;
 	}
 
 	/* set things up */
@@ -270,38 +315,40 @@ R_API int r_regex_comp(RRegex *preg, const char *pattern, int cflags) {
 	g->nsub = 0;
 	g->ncategories = 1;	/* category 0 is "everything else" */
 	g->categories = &g->catspace[-(CHAR_MIN)]; // WTF
-	(void) memset((char *)g->catspace, 0, NC*sizeof(cat_t));
+	(void) memset ((char *)g->catspace, 0, NC*sizeof(cat_t));
 	g->backrefs = 0;
 
 	/* do it */
-	EMIT(OEND, 0);
-	g->firststate = THERE();
-	if (cflags & R_REGEX_EXTENDED)
+	EMIT (OEND, 0);
+	g->firststate = THERE ();
+	if (cflags & R_REGEX_EXTENDED) {
 		p_ere(p, OUT);
-	else if (cflags & R_REGEX_NOSPEC)
+	} else if (cflags & R_REGEX_NOSPEC) {
 		p_str (p);
-	else p_bre (p, OUT, OUT);
-	EMIT(OEND, 0);
-	g->laststate = THERE();
+	} else {
+		p_bre (p, OUT, OUT);
+	}
+	EMIT (OEND, 0);
+	g->laststate = THERE ();
 
 	/* tidy up loose ends and fill things in */
-	categorize(p, g);
-	stripsnug(p, g);
-	findmust(p, g);
-	g->nplus = pluscount(p, g);
+	categorize (p, g);
+	stripsnug (p, g);
+	findmust (p, g);
+	g->nplus = pluscount (p, g);
 	g->magic = MAGIC2;
 	preg->re_nsub = g->nsub;
 	preg->re_g = g;
 	preg->re_magic = MAGIC1;
 #ifndef REDEBUG
-	/* not debugging, so can't rely on the assert() in regexec() */
-	if (g->iflags&BAD)
-		SETERROR(R_REGEX_ASSERT);
+	/* not debugging, so can't rely on the asssert() in regexec() */
+	if (g->iflags & BAD) {
+		SETERROR (R_REGEX_ASSERT);
+	}
 #endif
-
-	/* win or lose, we're done */
-	if (p->error) /* lose */
+	if (p->error) {
 		r_regex_fini (preg);
+	}
 	return p->error;
 }
 
@@ -309,27 +356,28 @@ R_API int r_regex_comp(RRegex *preg, const char *pattern, int cflags) {
  - p_ere - ERE parser top level, concatenation and alternation
  */
 static void p_ere(struct parse *p, int stop) { /* character this ERE should end at */
-	char c;
+	bool isFirst = true;
 	sopno prevback = 0;
 	sopno prevfwd = 0;
 	sopno conc = 0;
-	int first = 1;		/* is this the first alternative? */
+	char c;
 
 	for (;;) {
 		/* do a bunch of concatenated expressions */
 		conc = HERE();
-		while (MORE() && (c = PEEK()) != '|' && c != stop)
-			p_ere_exp(p);
-		REQUIRE(HERE() != conc, R_REGEX_EMPTY);	/* require nonempty */
+		while (MORE() && (c = PEEK()) != '|' && c != stop) {
+			p_ere_exp (p);
+		}
+		REQUIRE (HERE () != conc, R_REGEX_EMPTY); /* require nonempty */
 
-		if (!EAT('|'))
+		if (!EAT('|')) {
 			break;		/* NOTE BREAK OUT */
-
-		if (first) {
-			INSERT(OCH_, conc);	/* offset is wrong */
+		}
+		if (isFirst) {
+			INSERT (OCH_, conc);	/* offset is wrong */
 			prevfwd = conc;
 			prevback = conc;
-			first = 0;
+			isFirst = false;
 		}
 		ASTERN(OOR1, prevback);
 		prevback = THERE();
@@ -338,12 +386,11 @@ static void p_ere(struct parse *p, int stop) { /* character this ERE should end 
 		EMIT(OOR2, 0);			/* offset is very wrong */
 	}
 
-	if (!first) {		/* tail-end fixups */
+	if (!isFirst) {		/* tail-end fixups */
 		AHEAD(prevfwd);
 		ASTERN(O_CH, prevback);
 	}
-
-	assert(!MORE() || SEE(stop));
+	//asert(!MORE() || SEE(stop));
 }
 
 /*
@@ -357,7 +404,9 @@ static void p_ere_exp(struct parse *p) {
 	sopno subno;
 	int wascaret = 0;
 
-	assert(MORE());		/* caller should have ensured this */
+	if (!MORE()) {		/* caller should have ensured this */
+		return;
+	}
 	c = GETNEXT();
 
 	pos = HERE();
@@ -366,14 +415,18 @@ static void p_ere_exp(struct parse *p) {
 		REQUIRE(MORE(), R_REGEX_EPAREN);
 		p->g->nsub++;
 		subno = p->g->nsub;
-		if (subno < NPAREN)
-			p->pbegin[subno] = HERE();
+		if (subno < NPAREN) {
+			p->pbegin[subno] = HERE ();
+		}
 		EMIT(OLPAREN, subno);
-		if (!SEE(')'))
-			p_ere(p, ')');
+		if (!SEE (')')) {
+			p_ere (p, ')');
+		}
 		if (subno < NPAREN) {
 			p->pend[subno] = HERE();
-			assert(p->pend[subno] != 0);
+			if (!p->pend[subno]) {
+				break;
+			}
 		}
 		EMIT(ORPAREN, subno);
 		MUSTEAT(')', R_REGEX_EPAREN);
@@ -398,10 +451,11 @@ static void p_ere_exp(struct parse *p) {
 		SETERROR(R_REGEX_BADRPT);
 		break;
 	case '.':
-		if (p->g->cflags&R_REGEX_NEWLINE)
+		if (p->g->cflags & R_REGEX_NEWLINE) {
 			nonnewline(p);
-		else
-			EMIT(OANY, 0);
+		} else {
+			EMIT (OANY, 0);
+		}
 		break;
 	case '[':
 		p_bracket(p);
@@ -419,13 +473,15 @@ static void p_ere_exp(struct parse *p) {
 		break;
 	}
 
-	if (!MORE())
+	if (!MORE ()) {
 		return;
+	}
 	c = PEEK();
 	/* we call { a repetition if followed by a digit */
-	if (!( c == '*' || c == '+' || c == '?' ||
-				(c == '{' && MORE2() && isdigit((ut8)PEEK2())) ))
-		return;		/* no repetition, we're done */
+	if (!(c == '*' || c == '+' || c == '?' ||
+		    (c == '{' && MORE2 () && isdigit ((ut8)PEEK2 ())))) {
+		return; /* no repetition, we're done */
+	}
 	NEXT();
 
 	REQUIRE(!wascaret, R_REGEX_BADRPT);
@@ -456,26 +512,31 @@ static void p_ere_exp(struct parse *p) {
 			if (isdigit((ut8)PEEK())) {
 				count2 = p_count(p);
 				REQUIRE(count <= count2, R_REGEX_BADBR);
-			} else		/* single number with comma */
+			} else { /* single number with comma */
 				count2 = INTFINITY;
-		} else		/* just a single number */
+			}
+		} else { /* just a single number */
 			count2 = count;
+		}
 		repeat(p, pos, count, count2);
 		if (!EAT('}')) {	/* error heuristics */
-			while (MORE() && PEEK() != '}')
-				NEXT();
+			while (MORE () && PEEK () != '}') {
+				NEXT ();
+			}
 			REQUIRE(MORE(), R_REGEX_EBRACE);
 			SETERROR(R_REGEX_BADBR);
 		}
 		break;
 	}
 
-	if (!MORE())
+	if (!MORE ()) {
 		return;
+	}
 	c = PEEK();
-	if (!( c == '*' || c == '+' || c == '?' ||
-				(c == '{' && MORE2() && isdigit((ut8)PEEK2())) ) )
+	if (!(c == '*' || c == '+' || c == '?' ||
+		    (c == '{' && MORE2 () && isdigit ((ut8)PEEK2 ())))) {
 		return;
+	}
 	SETERROR(R_REGEX_BADRPT);
 }
 
@@ -484,8 +545,9 @@ static void p_ere_exp(struct parse *p) {
  */
 static void p_str(struct parse *p) {
 	REQUIRE(MORE(), R_REGEX_EMPTY);
-	while (MORE())
+	while (MORE()) {
 		ordinary(p, GETNEXT());
+	}
 }
 
 /*
@@ -542,7 +604,9 @@ p_simp_re(struct parse *p,
 
 	pos = HERE();		/* repetion op, if any, covers from here */
 
-	assert(MORE());		/* caller should have ensured this */
+	if (!MORE()) {		/* caller should have ensured this */
+		return 0;
+	}
 	c = GETNEXT();
 	if (c == '\\') {
 		REQUIRE(MORE(), R_REGEX_EESCAPE);
@@ -550,10 +614,11 @@ p_simp_re(struct parse *p,
 	}
 	switch (c) {
 	case '.':
-		if (p->g->cflags&R_REGEX_NEWLINE)
+		if (p->g->cflags & R_REGEX_NEWLINE) {
 			nonnewline(p);
-		else
-			EMIT(OANY, 0);
+		} else {
+			EMIT (OANY, 0);
+		}
 		break;
 	case '[':
 		p_bracket(p);
@@ -564,15 +629,19 @@ p_simp_re(struct parse *p,
 	case BACKSL|'(':
 		p->g->nsub++;
 		subno = p->g->nsub;
-		if (subno < NPAREN)
-			p->pbegin[subno] = HERE();
+		if (subno < NPAREN) {
+			p->pbegin[subno] = HERE ();
+		}
 		EMIT(OLPAREN, subno);
 		/* the MORE here is an error heuristic */
-		if (MORE() && !SEETWO('\\', ')'))
-			p_bre(p, '\\', ')');
+		if (MORE () && !SEETWO ('\\', ')')) {
+			p_bre (p, '\\', ')');
+		}
 		if (subno < NPAREN) {
 			p->pend[subno] = HERE();
-			assert(p->pend[subno] != 0);
+			if (!p->pend[subno]) {
+				break;
+			}
 		}
 		EMIT(ORPAREN, subno);
 		REQUIRE(EATTWO('\\', ')'), R_REGEX_EPAREN);
@@ -591,17 +660,18 @@ p_simp_re(struct parse *p,
 	case BACKSL|'8':
 	case BACKSL|'9':
 		i = (c&~BACKSL) - '0';
-		assert(i < NPAREN);
 		if (p->pend[i] != 0) {
-			assert(i <= p->g->nsub);
-			EMIT(OBACK_, i);
-			assert(p->pbegin[i] != 0);
-			assert(OP(p->strip[p->pbegin[i]]) == OLPAREN);
-			assert(OP(p->strip[p->pend[i]]) == ORPAREN);
-			(void) dupl(p, p->pbegin[i]+1, p->pend[i]);
-			EMIT(O_BACK, i);
-		} else
+			if (i <= p->g->nsub) {
+				EMIT(OBACK_, i);
+				if (p->pbegin[i] != 0 && OP(p->strip[p->pbegin[i]]) == OLPAREN &&
+				  OP(p->strip[p->pend[i]]) == ORPAREN) {
+					(void) dupl(p, p->pbegin[i]+1, p->pend[i]);
+					EMIT(O_BACK, i);
+				}
+			}
+		} else {
 			SETERROR(R_REGEX_ESUBREG);
+		}
 		p->g->backrefs = 1;
 		break;
 	case '*':
@@ -624,19 +694,23 @@ p_simp_re(struct parse *p,
 			if (MORE() && isdigit((ut8)PEEK())) {
 				count2 = p_count(p);
 				REQUIRE(count <= count2, R_REGEX_BADBR);
-			} else		/* single number with comma */
+			} else { /* single number with comma */
 				count2 = INTFINITY;
-		} else		/* just a single number */
+			}
+		} else { /* just a single number */
 			count2 = count;
+		}
 		repeat(p, pos, count, count2);
 		if (!EATTWO('\\', '}')) {	/* error heuristics */
-			while (MORE() && !SEETWO('\\', '}'))
-				NEXT();
+			while (MORE () && !SEETWO ('\\', '}')) {
+				NEXT ();
+			}
 			REQUIRE(MORE(), R_REGEX_EBRACE);
 			SETERROR(R_REGEX_BADBR);
 		}
-	} else if (c == '$')	/* $ (but not \$) ends it */
-		return(1);
+	} else if (c == '$') { /* $ (but not \$) ends it */
+		return (1);
+	}
 
 	return(0);
 }
@@ -681,21 +755,25 @@ static void p_bracket(struct parse *p) {
 		return;
 	}
 
-	if ((cs = allocset(p)) == NULL) {
+	if (!(cs = allocset(p))) {
 		/* allocset did set error status in p */
 		return;
 	}
 
-	if (EAT('^'))
-		invert++;	/* make note to invert set at end */
-	if (EAT(']'))
+	if (EAT ('^')) {
+		invert++; /* make note to invert set at end */
+	}
+	if (EAT (']')) {
 		CHadd(cs, ']');
-	else if (EAT('-'))
-		CHadd(cs, '-');
-	while (MORE() && PEEK() != ']' && !SEETWO('-', ']'))
-		p_b_term(p, cs);
-	if (EAT('-'))
-		CHadd(cs, '-');
+	} else if (EAT ('-')) {
+		CHadd (cs, '-');
+	}
+	while (MORE () && PEEK () != ']' && !SEETWO ('-', ']')) {
+		p_b_term (p, cs);
+	}
+	if (EAT ('-')) {
+		CHadd (cs, '-');
+	}
 	MUSTEAT(']', R_REGEX_EBRACK);
 
 	if (p->error != 0) {	/* don't mess things up further */
@@ -707,30 +785,39 @@ static void p_bracket(struct parse *p) {
 		int i;
 		int ci;
 
-		for (i = p->g->csetsize - 1; i >= 0; i--)
+		for (i = p->g->csetsize - 1; i >= 0; i--) {
 			if (CHIN(cs, i) && isalpha(i)) {
 				ci = othercase(i);
-				if (ci != i)
-					CHadd(cs, ci);
+				if (ci != i) {
+					CHadd (cs, ci);
+				}
 			}
-		if (cs->multis != NULL)
-			mccase(p, cs);
+		}
+		if (cs->multis != NULL) {
+			mccase (p, cs);
+		}
 	}
 	if (invert) {
 		int i;
 
-		for (i = p->g->csetsize - 1; i >= 0; i--)
-			if (CHIN(cs, i))
+		for (i = p->g->csetsize - 1; i >= 0; i--) {
+			if (CHIN (cs, i)) {
 				CHsub(cs, i);
-			else
-				CHadd(cs, i);
-		if (p->g->cflags&R_REGEX_NEWLINE)
-			CHsub(cs, '\n');
-		if (cs->multis != NULL)
-			mcinvert(p, cs);
+			} else {
+				CHadd (cs, i);
+			}
+		}
+		if (p->g->cflags & R_REGEX_NEWLINE) {
+			CHsub (cs, '\n');
+		}
+		if (cs->multis != NULL) {
+			mcinvert (p, cs);
+		}
 	}
 
-	assert(cs->multis == NULL);		/* xxx */
+	if (cs->multis) {		/* xxx */
+		return;
+	}
 
 	if (nch(p, cs) == 1) {		/* optimize singleton sets */
 		ordinary(p, firstch(p, cs));
@@ -787,16 +874,19 @@ static void p_b_term(struct parse *p, cset *cs) {
 		if (SEE('-') && MORE2() && PEEK2() != ']') {
 			/* range */
 			NEXT();
-			if (EAT('-'))
+			if (EAT ('-')) {
 				finish = '-';
-			else
-				finish = p_b_symbol(p);
-		} else
+			} else {
+				finish = p_b_symbol (p);
+			}
+		} else {
 			finish = start;
-/* xxx what about signed chars here... */
+		}
+		/* xxx what about signed chars here... */
 		REQUIRE(start <= finish, R_REGEX_ERANGE);
-		for (i = start; i <= finish; i++)
-			CHadd(cs, i);
+		for (i = start; i <= finish; i++) {
+			CHadd (cs, i);
+		}
 		break;
 	}
 }
@@ -811,23 +901,28 @@ static void p_b_cclass(struct parse *p, cset *cs) {
 	char *u;
 	char c;
 
-	while (MORE() && isalpha((unsigned char)PEEK()))
-		NEXT();
+	while (MORE () && isalpha ((unsigned char)PEEK ())) {
+		NEXT ();
+	}
 	len = p->next - sp;
-	for (cp = cclasses; cp->name != NULL; cp++)
-		if (strncmp(cp->name, sp, len) == 0 && cp->name[len] == '\0')
+	for (cp = cclasses; cp->name != NULL; cp++) {
+		if (strncmp (cp->name, sp, len) == 0 && cp->name[len] == '\0') {
 			break;
-	if (cp->name == NULL) {
+		}
+	}
+	if (!cp->name) {
 		/* oops, didn't find it */
 		SETERROR(R_REGEX_ECTYPE);
 		return;
 	}
 
 	u = cp->chars;
-	while ((c = *u++) != '\0')
-		CHadd(cs, c);
-	for (u = cp->multis; *u != '\0'; u += strlen(u) + 1)
-		MCadd(p, cs, u);
+	while ((c = *u++) != '\0') {
+		CHadd (cs, c);
+	}
+	for (u = cp->multis; *u != '\0'; u += strlen (u) + 1) {
+		MCadd (p, cs, u);
+	}
 }
 
 /*
@@ -851,8 +946,9 @@ p_b_symbol(struct parse *p)
 	char value;
 
 	REQUIRE(MORE(), R_REGEX_EBRACK);
-	if (!EATTWO('[', '.'))
-		return(GETNEXT());
+	if (!EATTWO ('[', '.')) {
+		return (GETNEXT ());
+	}
 
 	/* collating symbol */
 	value = p_b_coll_elem(p, '.');
@@ -871,18 +967,22 @@ p_b_coll_elem(struct parse *p,
 	struct cname *cp;
 	int len;
 
-	while (MORE() && !SEETWO(endc, ']'))
-		NEXT();
+	while (MORE () && !SEETWO (endc, ']')) {
+		NEXT ();
+	}
 	if (!MORE()) {
 		SETERROR(R_REGEX_EBRACK);
 		return(0);
 	}
 	len = p->next - sp;
-	for (cp = cnames; cp->name != NULL; cp++)
-		if (strncmp(cp->name, sp, len) == 0 && cp->name[len] == '\0')
-			return(cp->code);	/* known name */
-	if (len == 1)
-		return(*sp);	/* single character */
+	for (cp = cnames; cp->name != NULL; cp++) {
+		if (strncmp (cp->name, sp, len) == 0 && cp->name[len] == '\0') {
+			return (cp->code); /* known name */
+		}
+	}
+	if (len == 1) {
+		return (*sp); /* single character */
+	}
 	SETERROR(R_REGEX_ECOLLATE);			/* neither */
 	return(0);
 }
@@ -894,13 +994,16 @@ static char			/* if no counterpart, return ch */
 othercase(int ch)
 {
 	ch = (ut8)ch;
-	assert(isalpha(ch));
-	if (isupper(ch))
-		return ((ut8)tolower(ch));
-	else if (islower(ch))
-		return ((ut8)toupper(ch));
-	else			/* peculiar, but could happen */
-		return(ch);
+	if (isalpha(ch)) {
+		if (isupper (ch)) {
+			return ((ut8)tolower(ch));
+		} else if (islower (ch)) {
+			return ((ut8)toupper(ch));
+		} else { /* peculiar, but could happen */
+			return (ch);
+		}
+	}
+	return ch;
 }
 
 /*
@@ -914,16 +1017,18 @@ static void bothcases(struct parse *p, int ch) {
 	char bracket[3];
 
 	ch = (ut8)ch;
-	assert(othercase(ch) != ch);	/* p_bracket() would recurse */
-	p->next = bracket;
-	p->end = bracket+2;
-	bracket[0] = ch;
-	bracket[1] = ']';
-	bracket[2] = '\0';
-	p_bracket(p);
-	assert(p->next == bracket+2);
-	p->next = oldnext;
-	p->end = oldend;
+	if (othercase(ch) != ch) {	/* p_bracket() would recurse */
+		p->next = bracket;
+		p->end = bracket+2;
+		bracket[0] = ch;
+		bracket[1] = ']';
+		bracket[2] = '\0';
+		p_bracket(p);
+		if (p->next == bracket+2) {
+			p->next = oldnext;
+			p->end = oldend;
+		}
+	}
 }
 
 /*
@@ -934,12 +1039,13 @@ ordinary(struct parse *p, int ch)
 {
 	cat_t *cap = p->g->categories;
 
-	if ((p->g->cflags&R_REGEX_ICASE) && isalpha((ut8)ch) && othercase(ch) != ch)
+	if ((p->g->cflags & R_REGEX_ICASE) && isalpha ((ut8)ch) && othercase (ch) != ch) {
 		bothcases(p, ch);
-	else {
+	} else {
 		EMIT(OCHAR, (ut8)ch);
-		if (cap[ch] == 0)
+		if (cap[ch] == 0) {
 			cap[ch] = p->g->ncategories++;
+		}
 	}
 }
 
@@ -962,9 +1068,10 @@ nonnewline(struct parse *p)
 	bracket[2] = ']';
 	bracket[3] = '\0';
 	p_bracket(p);
-	assert(p->next == bracket+3);
-	p->next = oldnext;
-	p->end = oldend;
+	if (p->next == bracket+3) {
+		p->next = oldnext;
+		p->end = oldend;
+	}
 }
 
 /*
@@ -983,10 +1090,13 @@ repeat(struct parse *p,
 #	define	MAP(n)	(((n) <= 1) ? (n) : ((n) == INTFINITY) ? INF : N)
 	sopno copy;
 
-	if (p->error != 0)	/* head off possible runaway recursion */
+	if (p->error != 0) { /* head off possible runaway recursion */
 		return;
+	}
 
-	assert(from <= to);
+	if (from > to) {
+		return;
+	}
 
 	switch (REP(MAP(from), MAP(to))) {
 	case REP(0, 0):			/* must be user doing this */
@@ -1016,8 +1126,9 @@ repeat(struct parse *p,
 		AHEAD(THERE());			/* ...so fix it */
 		ASTERN(O_CH, THERETHERE());
 		copy = dupl(p, start+1, finish+1);
-		assert(copy == finish+4);
-		repeat(p, copy, 1, to-1);
+		if (copy == finish+4) {
+			repeat(p, copy, 1, to-1);
+		}
 		break;
 	case REP(1, INF):		/* as x+ */
 		INSERT(OPLUS_, start);
@@ -1043,8 +1154,9 @@ repeat(struct parse *p,
 static int			/* useless but makes type checking happy */
 seterr(struct parse *p, int e)
 {
-	if (p->error == 0)	/* keep earliest error condition */
+	if (p->error == 0) { /* keep earliest error condition */
 		p->error = e;
+	}
 	p->next = nuls;		/* try to bring things to a halt */
 	p->end = nuls;
 	return(0);		/* make the return value well-defined */
@@ -1066,27 +1178,33 @@ static cset * allocset(struct parse *p) {
 
 		p->ncsalloc += CHAR_BIT;
 		nc = p->ncsalloc;
-		assert(nc % CHAR_BIT == 0);
+		if (nc % CHAR_BIT) {
+			goto nomem;
+		}
 		nbytes = nc / CHAR_BIT * css;
 
 		ptr = (cset *)realloc((char *)p->g->sets, nc * sizeof(cset));
-		if (ptr == NULL)
+		if (!ptr) {
 			goto nomem;
+		}
 		p->g->sets = ptr;
 
 		ptr = (ut8 *)realloc((char *)p->g->setbits, nbytes);
-		if (ptr == NULL)
+		if (!ptr) {
 			goto nomem;
+		}
 		p->g->setbits = ptr;
 
-		for (i = 0; i < no; i++)
-			p->g->sets[i].ptr = p->g->setbits + css*(i/CHAR_BIT);
+		for (i = 0; i < no; i++) {
+			p->g->sets[i].ptr = p->g->setbits + css * (i / CHAR_BIT);
+		}
 
 		(void) memset((char *)p->g->setbits + (nbytes - css), 0, css);
 	}
 	/* XXX should not happen */
-	if (p->g->sets == NULL || p->g->setbits == NULL)
+	if (!p->g->sets || !p->g->setbits) {
 		goto nomem;
+	}
 
 	cs = &p->g->sets[no];
 	cs->ptr = p->g->setbits + css*((no)/CHAR_BIT);
@@ -1115,10 +1233,12 @@ static void freeset(struct parse *p, cset *cs) {
 	cset *top = &p->g->sets[p->g->ncsets];
 	size_t css = (size_t)p->g->csetsize;
 
-	for (i = 0; i < css; i++)
-		CHsub(cs, i);
-	if (cs == top-1)	/* recover only the easy case */
+	for (i = 0; i < css; i++) {
+		CHsub (cs, i);
+	}
+	if (cs == top - 1) { /* recover only the easy case */
 		p->g->ncsets--;
+	}
 }
 
 /*
@@ -1140,15 +1260,19 @@ freezeset(struct parse *p, cset *cs)
 	size_t css = (size_t)p->g->csetsize;
 
 	/* look for an earlier one which is the same */
-	for (cs2 = &p->g->sets[0]; cs2 < top; cs2++)
+	for (cs2 = &p->g->sets[0]; cs2 < top; cs2++) {
 		if (cs2->hash == h && cs2 != cs) {
 			/* maybe */
-			for (i = 0; i < css; i++)
-				if (!!CHIN(cs2, i) != !!CHIN(cs, i))
-					break;		/* no */
-			if (i == css)
-				break;			/* yes */
+			for (i = 0; i < css; i++) {
+				if (!!CHIN (cs2, i) != !!CHIN (cs, i)) {
+					break; /* no */
+				}
+			}
+			if (i == css) {
+				break; /* yes */
+			}
 		}
+	}
 
 	if (cs2 < top) {	/* found one */
 		freeset(p, cs);
@@ -1167,10 +1291,11 @@ firstch(struct parse *p, cset *cs)
 	int i;
 	size_t css = (size_t)p->g->csetsize;
 
-	for (i = 0; i < css; i++)
-		if (CHIN(cs, i))
-			return((char)i);
-	assert(0);
+	for (i = 0; i < css; i++) {
+		if (CHIN (cs, i)) {
+			return ((char)i);
+		}
+	}
 	return(0);		/* arbitrary */
 }
 
@@ -1182,9 +1307,11 @@ static int nch(struct parse *p, cset *cs) {
 	size_t css = (size_t)p->g->csetsize;
 	int n = 0;
 
-	for (i = 0; i < css; i++)
-		if (CHIN(cs, i))
+	for (i = 0; i < css; i++) {
+		if (CHIN (cs, i)) {
 			n++;
+		}
+	}
 	return(n);
 }
 
@@ -1197,9 +1324,10 @@ static void mcadd( struct parse *p, cset *cs, char *cp) {
 
 	cs->smultis += strlen(cp) + 1;
 	np = realloc(cs->multis, cs->smultis);
-	if (np == NULL) {
-		if (cs->multis)
-			free(cs->multis);
+	if (!np) {
+		if (cs->multis) {
+			free (cs->multis);
+		}
 		cs->multis = NULL;
 		SETERROR(R_REGEX_ESPACE);
 		return;
@@ -1217,7 +1345,8 @@ static void mcadd( struct parse *p, cset *cs, char *cp) {
  */
 /* ARGSUSED */
 static void mcinvert(struct parse *p, cset *cs) {
-	assert(cs->multis == NULL);	/* xxx */
+	//asert(!cs->multis);	/* xxx */
+	return;
 }
 
 /*
@@ -1228,7 +1357,8 @@ static void mcinvert(struct parse *p, cset *cs) {
  */
 /* ARGSUSED */
 static void mccase(struct parse *p, cset *cs) {
-	assert(cs->multis == NULL);	/* xxx */
+	//asert(!cs->multis);	/* xxx */
+	return;
 }
 
 /*
@@ -1242,9 +1372,11 @@ isinsets(struct re_guts *g, int c)
 	int ncols = (g->ncsets+(CHAR_BIT-1)) / CHAR_BIT;
 	unsigned uc = (ut8)c;
 
-	for (i = 0, col = g->setbits; i < ncols; i++, col += g->csetsize)
-		if (col[uc] != 0)
-			return(1);
+	for (i = 0, col = g->setbits; i < ncols; i++, col += g->csetsize) {
+		if (col[uc] != 0) {
+			return (1);
+		}
+	}
 	return(0);
 }
 
@@ -1260,9 +1392,11 @@ samesets(struct re_guts *g, int c1, int c2)
 	unsigned uc1 = (ut8)c1;
 	unsigned uc2 = (ut8)c2;
 
-	for (i = 0, col = g->setbits; i < ncols; i++, col += g->csetsize)
-		if (col[uc1] != col[uc2])
-			return(0);
+	for (i = 0, col = g->setbits; i < ncols; i++, col += g->csetsize) {
+		if (col[uc1] != col[uc2]) {
+			return (0);
+		}
+	}
 	return(1);
 }
 
@@ -1278,17 +1412,21 @@ categorize(struct parse *p, struct re_guts *g)
 	cat_t cat;
 
 	/* avoid making error situations worse */
-	if (!p || p->error != 0 || !cats )
+	if (!p || p->error != 0 || !cats) {
 		return;
+	}
 
-	for (c = CHAR_MIN; c <= CHAR_MAX; c++)
+	for (c = CHAR_MIN; c <= CHAR_MAX; c++) {
 		if ( *(cats+c) && isinsets(g, c)) {
 			cat = g->ncategories++;
 			cats[c] = cat;
-			for (c2 = c+1; c2 <= CHAR_MAX; c2++)
-				if (cats[c2] == 0 && samesets(g, c, c2))
+			for (c2 = c + 1; c2 <= CHAR_MAX; c2++) {
+				if (cats[c2] == 0 && samesets (g, c, c2)) {
 					cats[c2] = cat;
+				}
+			}
 		}
+	}
 }
 
 /*
@@ -1302,15 +1440,19 @@ dupl(struct parse *p,
 	sopno ret = HERE();
 	sopno len = finish - start;
 
-	assert(finish >= start);
-	if (len == 0)
-		return(ret);
-	enlarge(p, p->ssize + len);	/* this many unexpected additions */
-	assert(p->ssize >= p->slen + len);
-	(void) memcpy((char *)(p->strip + p->slen),
-		(char *)(p->strip + start), (size_t)len*sizeof(sop));
-	p->slen += len;
-	return(ret);
+	if (finish >= start) {
+		if (len == 0) {
+			return (ret);
+		}
+		enlarge(p, p->ssize + len);	/* this many unexpected additions */
+		if (p->ssize >= p->slen + len) {
+			(void) memcpy((char *)(p->strip + p->slen),
+			  (char *)(p->strip + start), (size_t)len*sizeof(sop));
+			p->slen += len;
+			return(ret);
+		}
+	}
+	return ret;
 }
 
 /*
@@ -1324,19 +1466,22 @@ static void
 doemit(struct parse *p, sop op, size_t opnd)
 {
 	/* avoid making error situations worse */
-	if (p->error != 0)
+	if (p->error != 0) {
 		return;
+	}
 
 	/* deal with oversize operands ("can't happen", more or less) */
-	assert(opnd < 1<<OPSHIFT);
+	if (opnd < 1<<OPSHIFT) {
 
-	/* deal with undersized strip */
-	if (p->slen >= p->ssize)
-		enlarge(p, (p->ssize+1) / 2 * 3);	/* +50% */
-	assert(p->slen < p->ssize);
-
-	/* finally, it's all reduced to the easy case */
-	p->strip[p->slen++] = SOP(op, opnd);
+		/* deal with undersized strip */
+		if (p->slen >= p->ssize) {
+			enlarge (p, (p->ssize + 1) / 2 * 3); /* +50% */
+		}
+		if (p->slen < p->ssize) {
+			/* finally, it's all reduced to the easy case */
+			p->strip[p->slen++] = SOP(op, opnd);
+		}
+	}
 }
 
 /*
@@ -1350,24 +1495,28 @@ doinsert(struct parse *p, sop op, size_t opnd, sopno pos)
 	int i;
 
 	/* avoid making error situations worse */
-	if (p->error != 0)
+	if (p->error != 0) {
 		return;
+	}
 
 	sn = HERE();
 	EMIT(op, opnd);		/* do checks, ensure space */
-	assert(HERE() == sn+1);
+	if (HERE() != sn+1) {
+		return;
+	}
 	s = p->strip[sn];
 
 	/* adjust paren pointers */
-	assert(pos > 0);
-	for (i = 1; i < NPAREN; i++) {
-		if (p->pbegin[i] >= pos) {
-			p->pbegin[i]++;
+	if (pos > 0) {
+		for (i = 1; i < NPAREN; i++) {
+			if (p->pbegin[i] >= pos) {
+				p->pbegin[i]++;
+			}
+			if (p->pend[i] >= pos) {
+				p->pend[i]++;
+			}
 		}
-		if (p->pend[i] >= pos) {
-			p->pend[i]++;
-		}
-	}
+	}	
 
 	memmove((char *)&p->strip[pos+1], (char *)&p->strip[pos],
 						(HERE()-pos-1)*sizeof(sop));
@@ -1381,11 +1530,13 @@ static void
 dofwd(struct parse *p, sopno pos, sop value)
 {
 	/* avoid making error situations worse */
-	if (p->error != 0)
+	if (p->error != 0) {
 		return;
+	}
 
-	assert(value < 1<<OPSHIFT);
-	p->strip[pos] = OP(p->strip[pos]) | value;
+	if (value < 1<<OPSHIFT) {
+		p->strip[pos] = OP(p->strip[pos]) | value;
+	}
 }
 
 /*
@@ -1396,11 +1547,12 @@ enlarge(struct parse *p, sopno size)
 {
 	sop *sp;
 
-	if (p->ssize >= size)
+	if (p->ssize >= size) {
 		return;
+	}
 
 	sp = (sop *)realloc(p->strip, size*sizeof(sop));
-	if (sp == NULL) {
+	if (!sp) {
 		SETERROR(R_REGEX_ESPACE);
 		return;
 	}
@@ -1416,7 +1568,7 @@ stripsnug(struct parse *p, struct re_guts *g)
 {
 	g->nstates = p->slen;
 	g->strip = (sop *)realloc((char *)p->strip, p->slen * sizeof(sop));
-	if (g->strip == NULL) {
+	if (!g->strip) {
 		SETERROR(R_REGEX_ESPACE);
 		g->strip = p->strip;
 	}
@@ -1443,8 +1595,9 @@ findmust(struct parse *p, struct re_guts *g)
 	sopno i;
 
 	/* avoid making error situations worse */
-	if (p->error != 0)
+	if (p->error != 0) {
 		return;
+	}
 
 	/* find the longest OCHAR sequence in strip */
 	newlen = 0;
@@ -1453,8 +1606,9 @@ findmust(struct parse *p, struct re_guts *g)
 		s = *scan++;
 		switch (OP(s)) {
 		case OCHAR:		/* sequence member */
-			if (newlen == 0)		/* new sequence */
+			if (newlen == 0) { /* new sequence */
 				newstart = scan - 1;
+			}
 			newlen++;
 			break;
 		case OPLUS_:		/* things that don't break one */
@@ -1467,7 +1621,7 @@ findmust(struct parse *p, struct re_guts *g)
 			do {
 				scan += OPND(s);
 				s = *scan;
-				/* assert() interferes w debug printouts */
+				/* asert() interferes w debug printouts */
 				if (OP(s) != O_QUEST && OP(s) != O_CH &&
 							OP(s) != OOR2) {
 					g->iflags |= BAD;
@@ -1485,25 +1639,29 @@ findmust(struct parse *p, struct re_guts *g)
 		}
 	} while (OP(s) != OEND);
 
-	if (g->mlen == 0)		/* there isn't one */
+	if (g->mlen == 0) { /* there isn't one */
 		return;
+	}
 
 	/* turn it into a character string */
 	g->must = malloc((size_t)g->mlen + 1);
-	if (g->must == NULL) {		/* argh; just forget it */
+	if (!g->must) {		/* argh; just forget it */
 		g->mlen = 0;
 		return;
 	}
 	cp = g->must;
 	scan = start;
 	for (i = g->mlen; i > 0; i--) {
-		while (OP(s = *scan++) != OCHAR)
+		while (OP (s = *scan++) != OCHAR) {
 			continue;
-		assert(cp < g->must + g->mlen);
-		*cp++ = (char)OPND(s);
+		}
+		if (cp < g->must + g->mlen) {
+			*cp++ = (char)OPND(s);
+		}
 	}
-	assert(cp == g->must + g->mlen);
-	*cp++ = '\0';		/* just on general principles */
+	if (cp == g->must + g->mlen) {
+		*cp++ = '\0';		/* just on general principles */
+	}
 }
 
 /*
@@ -1517,8 +1675,9 @@ pluscount(struct parse *p, struct re_guts *g)
 	sopno plusnest = 0;
 	sopno maxnest = 0;
 
-	if (p->error != 0)
-		return(0);	/* there may not be an OEND */
+	if (p->error != 0) {
+		return (0); /* there may not be an OEND */
+	}
 
 	scan = g->strip + 1;
 	do {
@@ -1528,13 +1687,15 @@ pluscount(struct parse *p, struct re_guts *g)
 			plusnest++;
 			break;
 		case O_PLUS:
-			if (plusnest > maxnest)
+			if (plusnest > maxnest) {
 				maxnest = plusnest;
+			}
 			plusnest--;
 			break;
 		}
 	} while (OP(s) != OEND);
-	if (plusnest != 0)
+	if (plusnest != 0) {
 		g->iflags |= BAD;
+	}
 	return(maxnest);
 }

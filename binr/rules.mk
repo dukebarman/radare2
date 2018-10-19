@@ -2,11 +2,8 @@ BINR_PROGRAM=1
 include ../../libr/config.mk
 include ../../shlr/zip/deps.mk
 
-ifneq ($(OSTYPE),windows)
-# tcc doesn't recognize the -pie option
 ifeq (,$(findstring tcc,${CC}))
 CFLAGS+=-pie
-endif
 endif
 CFLAGS+=-I$(LTOP)/include
 
@@ -21,26 +18,37 @@ endif
 OBJ+=${BIN}.o
 BEXE=${BIN}${EXT_EXE}
 
-ifeq ($(WITHNONPIC),1)
-## LDFLAGS+=$(addsuffix /lib${BINDEPS}.a,$(addprefix ../../libr/,$(subst r_,,$(BINDEPS))))
-LDFLAGS+=$(shell for a in ${BINDEPS} ; do b=`echo $$a |sed -e s,r_,,g`; echo ../../libr/$$b/lib$$a.a ; done )
-LDFLAGS+=../../shlr/sdb/src/libsdb.a
-LDFLAGS+=../../shlr/grub/libgrubfs.a
-LDFLAGS+=../../shlr/gdb/lib/libgdbr.a
-LDFLAGS+=../../shlr/wind/libr_wind.a
-LDFLAGS+=../../shlr/capstone/libcapstone.a
-LDFLAGS+=../../shlr/java/libr_java.a
+# ifeq ($(WITHNONPIC),1)
+# ## LDFLAGS+=$(addsuffix /lib${BINDEPS}.a,$(addprefix ../../libr/,$(subst r_,,$(BINDEPS))))
+# LDFLAGS+=$(shell for a in ${BINDEPS} ; do b=`echo $$a |sed -e s,r_,,g`; echo ../../libr/$$b/lib$$a.${EXT_AR} ; done )
+# LDFLAGS+=../../shlr/sdb/src/libsdb.a
+# ifeq (1,$(WITH_GPL))
+# LDFLAGS+=../../shlr/grub/libgrubfs.a
+# endif
+# LDFLAGS+=../../shlr/gdb/lib/libgdbr.a
+# LDFLAGS+=../../shlr/windbg/libr_windbg.a
+# LDFLAGS+=../../shlr/capstone/libcapstone.a
+# LDFLAGS+=../../shlr/java/libr_java.a
+# LDFLAGS+=../../libr/socket/libr_socket.a
+# LDFLAGS+=../../libr/util/libr_util.a
+# ifneq (${OSTYPE},haiku)
+# ifneq ($(CC),cccl)
+# LDFLAGS+=-lm
+# endif
+# endif
+# endif
+
+LDFLAGS+=${DL_LIBS}
+LDFLAGS+=${LINK}
 ifneq (${ANDROID},1)
+ifneq (${OSTYPE},windows)
 ifneq (${OSTYPE},linux)
+ifneq ($(CC),cccl)
 LDFLAGS+=-lpthread
 endif
 endif
-ifneq (${OSTYPE},haiku)
-LDFLAGS+=-lm
 endif
 endif
-LDFLAGS+=${DL_LIBS}
-LDFLAGS+=${LINK}
 
 REAL_LDFLAGS=$(subst -shared,,$(LDFLAGS))
 
@@ -66,14 +74,10 @@ endif
 
 # -static fails because -ldl -lpthread static-gcc ...
 ${BEXE}: ${OBJ} ${SHARED_OBJ}
-ifeq ($(WITHNONPIC),1)
-	${CC} -pie ${CFLAGS} $+ -L.. -o $@ $(REAL_LDFLAGS)
-else
 ifneq ($(SILENT),)
 	@echo LD $@
 endif
 	${CC} ${CFLAGS} $+ -L.. -o $@ $(REAL_LDFLAGS)
-endif
 endif
 
 # Dummy myclean rule that can be overriden by the t/ Makefile

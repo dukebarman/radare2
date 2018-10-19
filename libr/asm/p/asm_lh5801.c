@@ -4,27 +4,26 @@
 #include "../../arch/lh5801/lh5801.c"
 #include <r_asm.h>
 #include <r_types.h>
+#include <r_lib.h>
 
-static int disassemble(RAsm *as, RAsmOp *op, const ut8 *buf, int len)
-{
+static int disassemble(RAsm *as, RAsmOp *op, const ut8 *buf, int len) {
 	struct lh5801_insn insn;
-	int consumed;
-
-	if (!op)
+	if (!op) {
 		return 0;
-
-	consumed = lh5801_decode (&insn, buf, len);
+	}
+	int consumed = lh5801_decode (&insn, buf, len);
 	if (consumed == -1 || consumed == 0) {
-		snprintf(op->buf_asm, R_ASM_BUFSIZE, "invalid");
+		r_strbuf_set (&op->buf_asm, "invalid");
 		op->size = 1;
 		return 0;
-	} else {
-		lh5801_print_insn (op->buf_asm, R_ASM_BUFSIZE, &insn);
-		op->size = consumed;
-		//op->payload = lh5801_insn_descs[insn.type].format & 3;
-		// ^ MAYBE?
-		return op->size;
 	}
+	char buf_asm[128] = {0};
+	lh5801_print_insn (buf_asm, sizeof (buf_asm), &insn);
+	r_strbuf_set (&op->buf_asm, buf_asm);
+	op->size = consumed;
+	//op->payload = lh5801_insn_descs[insn.type].format & 3;
+	// ^ MAYBE?
+	return op->size;
 }
 
 RAsmPlugin r_asm_plugin_lh5801 = {
@@ -38,7 +37,7 @@ RAsmPlugin r_asm_plugin_lh5801 = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ASM,
 	.data = &r_asm_plugin_lh5801,
 	.version = R2_VERSION

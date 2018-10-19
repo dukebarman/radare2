@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2015 - pancake */
+/* radare - LGPL - Copyright 2009-2016 - pancake */
 
 #include <r_cmd.h>
 #include <r_util.h>
@@ -21,10 +21,13 @@ R_API void r_cmd_alias_init(RCmd *cmd) {
 R_API RCmd *r_cmd_new () {
 	int i;
 	RCmd *cmd = R_NEW0 (RCmd);
-	if (!cmd) return cmd;
+	if (!cmd) {
+		return cmd;
+	}
 	cmd->lcmds = r_list_new ();
-	for (i=0;i<NCMDS;i++)
+	for (i = 0; i < NCMDS; i++) {
 		cmd->cmds[i] = NULL;
+	}
 	cmd->nullcallback = cmd->data = NULL;
 	r_core_plugin_init (cmd);
 	r_cmd_macro_init (&cmd->macro);
@@ -34,28 +37,34 @@ R_API RCmd *r_cmd_new () {
 
 R_API RCmd *r_cmd_free(RCmd *cmd) {
 	int i;
-	if (!cmd) return NULL;
+	if (!cmd) {
+		return NULL;
+	}
 	r_cmd_alias_free (cmd);
 	r_cmd_macro_free (&cmd->macro);
 	// dinitialize plugin commands
-	r_core_plugin_deinit(cmd);
+	r_core_plugin_fini (cmd);
 	r_list_free (cmd->plist);
 	r_list_free (cmd->lcmds);
-	for (i=0;i<NCMDS;i++)
-		if (cmd->cmds[i])
+	for (i = 0; i < NCMDS; i++) {
+		if (cmd->cmds[i]) {
 			R_FREE (cmd->cmds[i]);
+		}
+	}
 	free (cmd);
 	return NULL;
 }
 
 R_API char **r_cmd_alias_keys(RCmd *cmd, int *sz) {
-	if (sz) *sz = cmd->aliases.count;
+	if (sz) {
+		*sz = cmd->aliases.count;
+	}
 	return cmd->aliases.keys;
 }
 
 R_API void r_cmd_alias_free (RCmd *cmd) {
 	int i; // find
-	for (i=0; i<cmd->aliases.count; i++) {
+	for (i = 0; i < cmd->aliases.count; i++) {
 		free (cmd->aliases.keys[i]);
 		free (cmd->aliases.values[i]);
 	}
@@ -67,36 +76,36 @@ R_API void r_cmd_alias_free (RCmd *cmd) {
 	cmd->aliases.values = NULL;
 }
 
-R_API int r_cmd_alias_del (RCmd *cmd, const char *k) {
+R_API bool r_cmd_alias_del (RCmd *cmd, const char *k) {
 	int i; // find
-	for (i=0; i<cmd->aliases.count; i++) {
+	for (i = 0; i < cmd->aliases.count; i++) {
 		if (!k || !strcmp (k, cmd->aliases.keys[i])) {
 			free (cmd->aliases.values[i]);
 			cmd->aliases.values[i] = NULL;
 			cmd->aliases.count--;
-			if (cmd->aliases.count>0) {
-				if (i>0) {
+			if (cmd->aliases.count > 0) {
+				if (i > 0) {
 					free (cmd->aliases.keys[i]);
 					cmd->aliases.keys[i] = cmd->aliases.keys[0];
 					free (cmd->aliases.values[i]);
 					cmd->aliases.values[i] = cmd->aliases.values[0];
 				}
 				memmove (cmd->aliases.values,
-					cmd->aliases.values+1,
-					cmd->aliases.count*sizeof (void*));
+					cmd->aliases.values + 1,
+					cmd->aliases.count * sizeof (void*));
 				memmove (cmd->aliases.keys,
-					cmd->aliases.keys+1,
-					cmd->aliases.count*sizeof (void*));
+					cmd->aliases.keys + 1,
+					cmd->aliases.count * sizeof (void*));
 			}
-			return 1;
+			return true;
 		}
 	}
-	return 0;
+	return false;
 }
 
 R_API int r_cmd_alias_set (RCmd *cmd, const char *k, const char *v, int remote) {
 	int i; // find
-	for (i=0; i<cmd->aliases.count; i++) {
+	for (i = 0; i < cmd->aliases.count; i++) {
 		int matches = !strcmp (k, cmd->aliases.keys[i]);
 		if (matches) {
 			free (cmd->aliases.values[i]);
@@ -106,12 +115,24 @@ R_API int r_cmd_alias_set (RCmd *cmd, const char *k, const char *v, int remote) 
 	}
 	// new
 	i = cmd->aliases.count++;
-	cmd->aliases.keys = (char **)realloc (cmd->aliases.keys,
-		sizeof (char**)*cmd->aliases.count);
-	cmd->aliases.remote = (int *)realloc (cmd->aliases.remote,
-		sizeof (int*)*cmd->aliases.count);
-	cmd->aliases.values = (char **)realloc (cmd->aliases.values,
-		sizeof (char**)*cmd->aliases.count);
+	char **K = (char **)realloc (cmd->aliases.keys,
+				     sizeof (char *) * cmd->aliases.count);
+	if (!K) {
+		return 0;
+	}
+	cmd->aliases.keys = K;
+	int *R = (int *)realloc (cmd->aliases.remote,
+				 sizeof (int) * cmd->aliases.count);
+	if (!R) {
+		return 0;
+	}
+	cmd->aliases.remote = R;
+	char **V = (char **)realloc (cmd->aliases.values,
+				     sizeof (char *) * cmd->aliases.count);
+	if (!V) {
+		return 0;
+	}
+	cmd->aliases.values = V;
 	cmd->aliases.keys[i] = strdup (k);
 	cmd->aliases.values[i] = strdup (v);
 	cmd->aliases.remote[i] = remote;
@@ -120,7 +141,10 @@ R_API int r_cmd_alias_set (RCmd *cmd, const char *k, const char *v, int remote) 
 
 R_API char *r_cmd_alias_get (RCmd *cmd, const char *k, int remote) {
 	int matches, i;
-	for (i=0; i<cmd->aliases.count; i++) {
+	if (!cmd || !k) {
+		return NULL;
+	}
+	for (i=0; i < cmd->aliases.count; i++) {
 		matches = 0;
 		if (remote) {
 			if (cmd->aliases.remote[i]) {
@@ -144,8 +168,9 @@ R_API int r_cmd_set_data(RCmd *cmd, void *data) {
 
 R_API int r_cmd_add_long(RCmd *cmd, const char *lcmd, const char *scmd, const char *desc) {
 	RCmdLongItem *item = R_NEW (RCmdLongItem);
-	if (item == NULL)
+	if (!item) {
 		return false;
+	}
 	strncpy (item->cmd, lcmd, sizeof (item->cmd)-1);
 	strncpy (item->cmd_short, scmd, sizeof (item->cmd_short)-1);
 	item->cmd_len = strlen (lcmd);
@@ -162,7 +187,7 @@ R_API int r_cmd_add(RCmd *c, const char *cmd, const char *desc, r_cmd_callback(c
 	int idx = (ut8)cmd[0];
 
 	item = c->cmds[idx];
-	if (item == NULL) {
+	if (!item) {
 		item = R_NEW (RCmdItem);
 		c->cmds[idx] = item;
 	}
@@ -174,7 +199,7 @@ R_API int r_cmd_add(RCmd *c, const char *cmd, const char *desc, r_cmd_callback(c
 
 R_API int r_cmd_del(RCmd *cmd, const char *command) {
 	int idx = (ut8)command[0];
-	free(cmd->cmds[idx]);
+	free (cmd->cmds[idx]);
 	cmd->cmds[idx] = NULL;
 	return 0;
 }
@@ -184,9 +209,13 @@ R_API int r_cmd_call(RCmd *cmd, const char *input) {
 	int ret = -1;
 	RListIter *iter;
 	RCorePlugin *cp;
+	if (!cmd || !input) {
+		return -1;
+	}
 	if (!input || !*input) {
-		if (cmd->nullcallback != NULL)
+		if (cmd->nullcallback) {
 			ret = cmd->nullcallback (cmd->data);
+		}
 	} else {
 		char *nstr = NULL;
 		const char *ji = r_cmd_alias_get (cmd, input, 1);
@@ -206,9 +235,11 @@ R_API int r_cmd_call(RCmd *cmd, const char *input) {
 		}
 		c = cmd->cmds[((ut8)input[0]) & 0xff];
 		if (c && c->callback) {
-			const char *inp = (*input)? input+1: "";
+			const char *inp = (*input)? input + 1: "";
 			ret = c->callback (cmd->data, inp);
-		} else ret = -1;
+		} else {
+			ret = -1;
+		}
 		free (nstr);
 	}
 	return ret;
@@ -221,15 +252,16 @@ R_API int r_cmd_call_long(RCmd *cmd, const char *input) {
 	int ret, inplen = strlen (input)+1;
 
 	r_list_foreach (cmd->lcmds, iter, c) {
-		if (inplen>=c->cmd_len && !r_str_cmp (input, c->cmd, c->cmd_len)) {
+		if (inplen >= c->cmd_len && !r_str_cmp (input, c->cmd, c->cmd_len)) {
 			int lcmd = strlen (c->cmd_short);
 			int linp = strlen (input+c->cmd_len);
 			/// SLOW malloc on most situations. use stack
 			inp = malloc (lcmd+linp+2); // TODO: use static buffer with R_CMD_MAXLEN
-			if (inp == NULL)
+			if (!inp) {
 				return -1;
+			}
 			memcpy (inp, c->cmd_short, lcmd);
-			memcpy (inp+lcmd, input+c->cmd_len, linp+1);
+			memcpy (inp + lcmd, input + c->cmd_len, linp + 1);
 			ret = r_cmd_call (cmd, inp);
 			free (inp);
 			return ret;
@@ -276,20 +308,19 @@ R_API int r_cmd_macro_add(RCmdMacro *mac, const char *oname) {
 	}
 
 	name = strdup (oname);
-	if (name == NULL) {
+	if (!name) {
 		perror ("strdup");
 		return 0;
 	}
 
 	pbody = strchr (name, ',');
-	if (pbody) {
-		*pbody = '\0';
-		pbody++;
-	} else {
+	if (!pbody) {
 		eprintf ("Invalid macro body\n");
 		free (name);
 		return false;
 	}
+	*pbody = '\0';
+	pbody++;
 
 	if (*name && name[1] && name[strlen (name)-1]==')') {
 		eprintf ("r_cmd_macro_add: missing macro body?\n");
@@ -314,9 +345,10 @@ R_API int r_cmd_macro_add(RCmdMacro *mac, const char *oname) {
 			break;
 		}
 	}
-	if (ptr)
+	if (ptr) {
 		*ptr = ' ';
-	if (macro == NULL) {
+	}
+	if (!macro) {
 		macro = (struct r_cmd_macro_item_t *)malloc (
 			sizeof (struct r_cmd_macro_item_t));
 		macro->name = strdup (name);
@@ -326,8 +358,9 @@ R_API int r_cmd_macro_add(RCmdMacro *mac, const char *oname) {
 	macro->code = (char *)malloc (macro->codelen);
 	*macro->code = '\0';
 	macro->nargs = 0;
-	if (args == NULL)
+	if (!args) {
 		args = "";
+	}
 	macro->args = strdup (args);
 	ptr = strchr (macro->name, ' ');
 	if (ptr != NULL) {
@@ -339,11 +372,11 @@ R_API int r_cmd_macro_add(RCmdMacro *mac, const char *oname) {
 	if (pbody) {
 #endif
 		for (lidx=0; pbody[lidx]; lidx++) {
-			if (pbody[lidx]==',')
+			if (pbody[lidx] == ',') {
 				pbody[lidx]='\n';
-			else
-			if (pbody[lidx]==')' && pbody[lidx-1]=='\n')
-				pbody[lidx]='\0';
+			} else if (pbody[lidx] == ')' && pbody[lidx - 1] == '\n') {
+				pbody[lidx] = '\0';
+			}
 		}
 		strncpy (macro->code, pbody, macro->codelen);
 		macro->code[macro->codelen-1] = 0;
@@ -381,8 +414,9 @@ R_API int r_cmd_macro_add(RCmdMacro *mac, const char *oname) {
 		}
 	}
 #endif
-	if (macro_update == 0)
+	if (macro_update == 0) {
 		r_list_append (mac->macros, macro);
+	}
 	free (name);
 	return 0;
 }
@@ -391,8 +425,13 @@ R_API int r_cmd_macro_rm(RCmdMacro *mac, const char *_name) {
 	RListIter *iter;
 	RCmdMacroItem *m;
 	char *name = strdup (_name);
+	if (!name) {
+		return false;
+	}
 	char *ptr = strchr (name, ')');
-	if (ptr) *ptr = '\0';
+	if (ptr) {
+		*ptr = '\0';
+	}
 	r_list_foreach (mac->macros, iter, m) {
 		if (!strcmp (m->name, name)) {
 			r_list_delete (mac->macros, iter);
@@ -416,9 +455,11 @@ R_API void r_cmd_macro_list(RCmdMacro *mac) {
 	r_list_foreach (mac->macros, iter, m) {
 		mac->cb_printf ("%d (%s %s, ", idx, m->name, m->args);
 		for (j=0; m->code[j]; j++) {
-			if (m->code[j]=='\n')
+			if (m->code[j] == '\n') {
 				mac->cb_printf (", ");
-			else mac->cb_printf ("%c", m->code[j]);
+			} else {
+				mac->cb_printf ("%c", m->code[j]);
+			}
 		}
 		mac->cb_printf (")\n");
 		idx++;
@@ -433,9 +474,11 @@ R_API void r_cmd_macro_meta(RCmdMacro *mac) {
 	r_list_foreach (mac->macros, iter, m) {
 		mac->cb_printf ("(%s %s, ", m->name, m->args);
 		for (j=0; m->code[j]; j++) {
-			if (m->code[j]=='\n')
+			if (m->code[j] == '\n') {
 				mac->cb_printf (", ");
-			else mac->cb_printf ("%c", m->code[j]);
+			} else {
+				mac->cb_printf ("%c", m->code[j]);
+			}
 		}
 		mac->cb_printf (")\n");
 	}
@@ -467,20 +510,24 @@ R_API int r_cmd_macro_cmd_args(RCmdMacro *mac, const char *ptr, const char *args
 				const char *word = r_str_word_get0 (arg, w);
 				if (word && *word) {
 					wordlen = strlen (word);
-					if ((i+wordlen+1) >= sizeof (cmd))
+					if ((i + wordlen + 1) >= sizeof (cmd)) {
 						return -1;
+					}
 					memcpy (cmd+i, word, wordlen+1);
 					i += wordlen-1;
 					j++;
-				} else eprintf ("Undefined argument %d\n", w);
+				} else {
+					eprintf ("Undefined argument %d\n", w);
+				}
 			} else
 			if (ptr[j+1]=='@') {
 				char off[32];
 				int offlen;
 				offlen = snprintf (off, sizeof (off), "%d",
 					mac->counter);
-				if ((i+offlen+1) >= sizeof (cmd))
+				if ((i + offlen + 1) >= sizeof (cmd)) {
 					return -1;
+				}
 				memcpy (cmd+i, off, offlen+1);
 				i += offlen-1;
 				j++;
@@ -493,7 +540,9 @@ R_API int r_cmd_macro_cmd_args(RCmdMacro *mac, const char *ptr, const char *args
 			cmd[i+1] = '\0';
 		}
 	}
-	for (pcmd = cmd; *pcmd && (*pcmd==' ' || *pcmd == '\t'); pcmd++);
+	for (pcmd = cmd; *pcmd && (*pcmd == ' ' || *pcmd == '\t'); pcmd++) {
+		;
+	}
 	//eprintf ("-pre %d\n", (int)mac->num->value);
 	int xx = (*pcmd==')')? 0: mac->cmd (mac->user, pcmd);
 	//eprintf ("-pos %p %d\n", mac->num, (int)mac->num->value);
@@ -502,7 +551,9 @@ R_API int r_cmd_macro_cmd_args(RCmdMacro *mac, const char *ptr, const char *args
 
 R_API char *r_cmd_macro_label_process(RCmdMacro *mac, RCmdMacroLabel *labels, int *labels_n, char *ptr) {
 	int i;
-	for (; *ptr==' '; ptr++);
+	for (; *ptr == ' '; ptr++) {
+		;
+	}
 	if (ptr[strlen (ptr)-1]==':' && !strchr (ptr, ' ')) {
 		/* label detected */
 		if (ptr[0]=='.') {
@@ -520,12 +571,15 @@ R_API char *r_cmd_macro_label_process(RCmdMacro *mac, RCmdMacroLabel *labels, in
 		if (ptr[0]=='?' && ptr[1]=='!' && ptr[2] != '?') {
 			if (mac->num && mac->num->value != 0) {
 				char *label = ptr + 3;
-				for (; *label==' '||*label=='.'; label++);
-		//		eprintf("===> GOTO %s\n", label);
+				for (; *label == ' ' || *label == '.'; label++) {
+					;
+				}
+				//		eprintf("===> GOTO %s\n", label);
 				/* goto label ptr+3 */
 				for (i=0;i<*labels_n;i++) {
-					if (!strcmp (label, labels[i].name))
+					if (!strcmp (label, labels[i].name)) {
 						return labels[i].ptr;
+					}
 				}
 				return NULL;
 			}
@@ -534,12 +588,15 @@ R_API char *r_cmd_macro_label_process(RCmdMacro *mac, RCmdMacroLabel *labels, in
 		if (ptr[0]=='?' && ptr[1]=='?' && ptr[2] != '?') {
 			if (mac->num->value == 0) {
 				char *label = ptr + 3;
-				for (;label[0]==' '||label[0]=='.'; label++);
-		//		eprintf("===> GOTO %s\n", label);
+				for (; label[0] == ' ' || label[0] == '.'; label++) {
+					;
+				}
+				//		eprintf("===> GOTO %s\n", label);
 				/* goto label ptr+3 */
 				for (i=0; i<*labels_n; i++) {
-					if (!strcmp (label, labels[i].name))
+					if (!strcmp (label, labels[i].name)) {
 						return labels[i].ptr;
+					}
 				}
 				return NULL;
 			}
@@ -566,7 +623,6 @@ R_API char *r_cmd_macro_label_process(RCmdMacro *mac, RCmdMacroLabel *labels, in
 
 /* TODO: add support for spaced arguments */
 R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name) {
-	RCons *cons;
 	char *args;
 	int nargs = 0;
 	char *str, *ptr, *ptr2;
@@ -578,16 +634,18 @@ R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name) {
 	struct r_cmd_macro_label_t labels[MACRO_LABELS];
 
 	str = strdup (name);
-	if (str == NULL) {
+	if (!str) {
 		perror ("strdup");
 		return false;
 	}
 	ptr = strchr (str, ')');
-	if (ptr == NULL) {
+	if (!ptr) {
 		eprintf ("Missing end ')' parenthesis.\n");
 		free (str);
 		return false;
-	} else *ptr='\0';
+	} else {
+		*ptr = '\0';
+	}
 
 	args = strchr (str, ' ');
 	if (args) {
@@ -604,43 +662,47 @@ R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name) {
 		return 0;
 	}
 	ptr = strchr (str, ',');
-	if (ptr) *ptr =0;
+	if (ptr) {
+		*ptr = 0;
+	}
 
-	cons = r_cons_singleton ();
-	r_cons_break (NULL, NULL);
+	r_cons_break_push (NULL, NULL);
 	r_list_foreach (mac->macros, iter, m) {
 		if (!strcmp (str, m->name)) {
 			char *ptr = m->code;
 			char *end = strchr (ptr, '\n');
-
 			if (m->nargs != 0 && nargs != m->nargs) {
-				eprintf ("Macro '%s' expects %d args, not %d\n",
-					m->name, m->nargs, nargs);
+				eprintf ("Macro '%s' expects %d args, not %d\n", m->name, m->nargs, nargs);
 				macro_level --;
 				free (str);
+				r_cons_break_pop ();
 				return false;
 			}
-
 			mac->brk = 0;
 			do {
-				if (end) *end = '\0';
-				if (cons->breaked) {
+				if (end) {
+					*end = '\0';
+				}
+				if (r_cons_is_breaked ()) {
 					eprintf ("Interrupted at (%s)\n", ptr);
-					if (end) *end = '\n';
+					if (end) {
+						*end = '\n';
+					}
 					free (str);
+					r_cons_break_pop ();
 					return false;
 				}
 				r_cons_flush ();
-
 				/* Label handling */
 				ptr2 = r_cmd_macro_label_process (mac, &(labels[0]), &labels_n, ptr);
-				if (ptr2 == NULL) {
+				if (!ptr2) {
 					eprintf ("Oops. invalid label name\n");
 					break;
-				} else
-				if (ptr != ptr2) { // && end) {
+				} else if (ptr != ptr2) {
 					ptr = ptr2;
-					if (end) *end ='\n';
+					if (end) {
+						*end = '\n';
+					}
 					end = strchr (ptr, '\n');
 					continue;
 				}
@@ -651,8 +713,9 @@ R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name) {
 					// TODO: handle quit? r == 0??
 					// quit, exits the macro. like a break
 					value = mac->num->value;
-					if (r <0) {
+					if (r < 0) {
 						free (str);
+						r_cons_break_pop ();
 						return r;
 					}
 				}
@@ -662,23 +725,24 @@ R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name) {
 				} else {
 					macro_level --;
 					free (str);
-					return true;
+					goto out_clean;
 				}
 
 				/* Fetch next command */
 				end = strchr (ptr, '\n');
 			} while (!mac->brk);
-
 			if (mac->brk) {
 				macro_level--;
 				free (str);
-				return true;
+				goto out_clean;
 			}
 		}
 	}
 	eprintf ("No macro named '%s'\n", str);
 	macro_level--;
 	free (str);
+out_clean:
+	r_cons_break_pop ();
 	return true;
 }
 
@@ -686,7 +750,8 @@ R_API int r_cmd_macro_break(RCmdMacro *mac, const char *value) {
 	mac->brk = 1;
 	mac->brk_value = NULL;
 	mac->_brk_value = (ut64)r_num_math (mac->num, value);
-	if (value && *value)
+	if (value && *value) {
 		mac->brk_value = &mac->_brk_value;
+	}
 	return 0;
 }

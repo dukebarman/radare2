@@ -19,6 +19,9 @@ typedef struct _fnditem {
 static fnditem* init_fi() {
 	fnditem* n;
 	n = (fnditem*) malloc (sizeof (fnditem));
+	if (!n) {
+		return NULL;
+	}
 	n->next = NULL;
 	return n;
 }
@@ -37,7 +40,9 @@ static void fini_fi(fnditem* fi) {
 
 static void add_fi (fnditem* n, unsigned char* blk, int patlen) {
 	fnditem* p;
-	for (p=n; p->next!=NULL; p=p->next);
+	for (p = n; p->next != NULL; p = p->next) {
+		;
+	}
 	p->next = (fnditem*) malloc (sizeof (fnditem));
 	p = p->next;
 	memcpy (p->str, blk, patlen);
@@ -46,9 +51,11 @@ static void add_fi (fnditem* n, unsigned char* blk, int patlen) {
 
 static int is_fi_present(fnditem* n, unsigned char* blk , int patlen) {
 	fnditem* p;
-	for (p=n; p->next!=NULL; p=p->next)
-		if (!memcmp (blk, p->str, patlen))
+	for (p = n; p->next != NULL; p = p->next) {
+		if (!memcmp (blk, p->str, patlen)) {
 			return true;
+		}
+	}
 	return false;
 }
 
@@ -82,7 +89,7 @@ R_API int r_search_pattern(RSearch *s, ut64 from, ut64 to) {
 		bproc = bact + patlen ;
 //		read ( fd, sblk, patlen );
 //XXX bytepattern should be used with a read callback
-		nr = ((bytes-bproc) < BSIZE)?(bytes-bproc):BSIZE;
+		nr = ((bytes - bproc) < BSIZE)?(bytes - bproc):BSIZE;
 	//XXX	radare_read_at(bact, sblk, patlen);
 		rb = s->iob.read_at (s->iob.io, addr, sblk, nr);
 		sblk[patlen] = 0; // XXX
@@ -91,24 +98,25 @@ R_API int r_search_pattern(RSearch *s, ut64 from, ut64 to) {
 		cnt = 0;
 		while (bproc < bytes) {
 			// TODO: handle ^C here
-			nr = ((bytes-bproc) < BSIZE)?(bytes-bproc):BSIZE;
+			nr = ((bytes - bproc) < BSIZE)?(bytes - bproc):BSIZE;
 			nr += (patlen - (nr % patlen)); // tamany de bloc llegit multiple superior de tamany busqueda
 			rb = s->iob.read_at (s->iob.io, bproc, block, nr);
-			if (rb<1) {
-				bproc +=nr;
+			if (rb < 1) {
+				bproc += nr;
 				break;
 			}
 			nr = rb;
 			addr += nr;
 			moar = 0;
-			for (i=0; i<nr; i++) {
+			for (i = 0; i<nr; i++) {
 				if (!memcmp (&block[i], sblk, patlen) && !is_fi_present (root, sblk, patlen)){
 					if (cnt == 0) {
 						add_fi (root, sblk, patlen);
 						pcnt++;
 						eprintf ("\nbytes: %d: ", pcnt);
-						for (k = 0; k<patlen; k++)
+						for (k = 0; k < patlen; k++) {
 							eprintf ("%02x", sblk[k]);
+						}
 						eprintf ("\nfound: %d: 0x%08"PFMT64x" ", pcnt, intaddr);
 					}
 					moar++;
@@ -116,11 +124,12 @@ R_API int r_search_pattern(RSearch *s, ut64 from, ut64 to) {
 					eprintf ("0x%08"PFMT64x" ", bproc+i);
 				}
 			}
-			if (moar>0)
-				eprintf ("\ncount: %d: %d\n", pcnt, moar+1);
+			if (moar > 0) {
+				eprintf ("\ncount: %d: %d\n", pcnt, moar + 1);
+			}
 			bproc += rb;
 		}
-		bact += (moar>0)? patlen: 1;
+		bact += (moar > 0)? patlen: 1;
 	}
 	eprintf ("\n");
 	fini_fi (root);

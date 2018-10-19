@@ -49,7 +49,7 @@ static int dirhook (const char *filename, const struct grub_dirhook_info *info, 
 static RList *FSP(_dir)(RFSRoot *root, const char *path, int view) {
 	GrubFS *gfs;
 
-	if (root == NULL)
+	if (!root)
 		return NULL;
 
 	gfs = root->ptr;
@@ -84,6 +84,7 @@ static void FSP(_umount)(RFSRoot *root) {
 RFSPlugin FSS(r_fs_plugin) = {
 	.name = FSNAME,
 	.desc = FSDESC,
+	.license = "GPL2",
 	.open = FSP(_open),
 	.read = FSP(_read),
 	.close = FSP(_close),

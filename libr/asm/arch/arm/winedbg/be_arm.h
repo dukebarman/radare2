@@ -17,6 +17,6 @@ void arm_set_thumb(struct winedbg_arm_insn *arminsn, int thumb);
 char* winedbg_arm_insn_asm(struct winedbg_arm_insn *arminsn);
 char* winedbg_arm_insn_hex(struct winedbg_arm_insn *arminsn);
 void* arm_free(struct winedbg_arm_insn *arminsn);
-struct winedbg_arm_insn* arm_new();
+struct winedbg_arm_insn* arm_new(void);
 
 #endif

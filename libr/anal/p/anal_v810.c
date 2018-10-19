@@ -17,17 +17,33 @@ enum {
 };
 
 static void update_flags(RAnalOp *op, int flags) {
-	if (flags & V810_FLAG_CY) r_strbuf_append(&op->esil, ",$c31,cy,=");
-	if (flags & V810_FLAG_OV) r_strbuf_append(&op->esil, ",$o,ov,=");
-	if (flags & V810_FLAG_S) r_strbuf_append(&op->esil, ",$s,s,=");
-	if (flags & V810_FLAG_Z) r_strbuf_append(&op->esil, ",$z,z,=");
+	if (flags & V810_FLAG_CY) {
+		r_strbuf_append (&op->esil, ",$c31,cy,=");
+	}
+	if (flags & V810_FLAG_OV) {
+		r_strbuf_append (&op->esil, ",$o,ov,=");
+	}
+	if (flags & V810_FLAG_S) {
+		r_strbuf_append (&op->esil, ",$s,s,=");
+	}
+	if (flags & V810_FLAG_Z) {
+		r_strbuf_append (&op->esil, ",$z,z,=");
+	}
 }
 
 static void clear_flags(RAnalOp *op, int flags) {
-	if (flags & V810_FLAG_CY) r_strbuf_append(&op->esil, ",0,cy,=");
-	if (flags & V810_FLAG_OV) r_strbuf_append(&op->esil, ",0,ov,=");
-	if (flags & V810_FLAG_S) r_strbuf_append(&op->esil, ",0,s,=");
-	if (flags & V810_FLAG_Z) r_strbuf_append(&op->esil, ",0,z,=");
+	if (flags & V810_FLAG_CY) {
+		r_strbuf_append (&op->esil, ",0,cy,=");
+	}
+	if (flags & V810_FLAG_OV) {
+		r_strbuf_append (&op->esil, ",0,ov,=");
+	}
+	if (flags & V810_FLAG_S) {
+		r_strbuf_append (&op->esil, ",0,s,=");
+	}
+	if (flags & V810_FLAG_Z) {
+		r_strbuf_append (&op->esil, ",0,z,=");
+	}
 }
 
 static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
@@ -43,20 +59,24 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 	r_strbuf_set (&op->esil, "");
 
 	ret = op->size = v810_decode_command (buf, len, &cmd);
-	if (ret <= 0) return ret;
+	if (ret <= 0) {
+		return ret;
+	}
 
 	word1 = r_read_ble16 (buf, anal->big_endian);
 
-	if (ret == 4)
+	if (ret == 4) {
 		word2 = r_read_ble16 (buf+2, anal->big_endian);
+	}
 
 	op->addr = addr;
 	op->jump = op->fail = -1;
 	op->ptr = op->val = -1;
 
 	opcode = OPCODE(word1);
-	if (opcode>>3 == 0x4)
+	if (opcode >> 3 == 0x4) {
 		opcode &= 0x20;
+	}
 
 	switch (opcode) {
 	case V810_MOV:
@@ -66,8 +86,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		break;
 	case V810_MOV_IMM5:
 		op->type = R_ANAL_OP_TYPE_MOV;
-		r_strbuf_appendf (&op->esil, "%hhd,r%u,=",
-						 SEXT5(IMM5(word1)), REG2(word1));
+		r_strbuf_appendf (&op->esil, "%d,r%u,=",
+						  (st8)SEXT5(IMM5(word1)), REG2(word1));
 		break;
 	case V810_MOVHI:
 		op->type = R_ANAL_OP_TYPE_MOV;
@@ -101,10 +121,11 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		update_flags (op, V810_FLAG_OV | V810_FLAG_S | V810_FLAG_Z);
 		break;
 	case V810_JMP:
-		if (REG1(word1) == 31)
+		if (REG1 (word1) == 31) {
 			op->type = R_ANAL_OP_TYPE_RET;
-		else
+		} else {
 			op->type = R_ANAL_OP_TYPE_UJMP;
+		}
 		r_strbuf_appendf (&op->esil, "r%u,pc,=",
 						 REG1(word1));
 		break;
@@ -166,8 +187,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		break;
 	case V810_CMP_IMM5:
 		op->type = R_ANAL_OP_TYPE_CMP;
-		r_strbuf_appendf (&op->esil, "%hhd,r%u,==",
-						 SEXT5(IMM5(word1)), REG2(word1));
+		r_strbuf_appendf (&op->esil, "%d,r%u,==",
+						  (st8)SEXT5(IMM5(word1)), REG2(word1));
 		update_flags (op, -1);
 		break;
 	case V810_SUB:
@@ -190,8 +211,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		break;
 	case V810_ADD_IMM5:
 		op->type = R_ANAL_OP_TYPE_ADD;
-		r_strbuf_appendf (&op->esil, "%hhd,r%u,+=",
-						 SEXT5(IMM5(word1)), REG2(word1));
+		r_strbuf_appendf (&op->esil, "%d,r%u,+=",
+						  (st8)SEXT5(IMM5(word1)), REG2(word1));
 		update_flags(op, -1);
 		break;
 	case V810_SHR:
@@ -203,8 +224,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		break;
 	case V810_SHR_IMM5:
 		op->type = R_ANAL_OP_TYPE_SHR;
-		r_strbuf_appendf (&op->esil, "%hhu,r%u,>>=",
-						 IMM5(word1), REG2(word1));
+		r_strbuf_appendf (&op->esil, "%u,r%u,>>=",
+						  (ut8)IMM5(word1), REG2(word1));
 		update_flags (op, V810_FLAG_CY | V810_FLAG_S | V810_FLAG_Z);
 		clear_flags (op, V810_FLAG_OV);
 		break;
@@ -221,8 +242,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		op->type = R_ANAL_OP_TYPE_SAR;
 		imm5 = IMM5(word1);
 		reg2 = REG2(word1);
-		r_strbuf_appendf (&op->esil, "31,r%u,>>,?{,%hhu,32,-,%hhu,1,<<,--,<<,}{,0,},%hhu,r%u,>>,|,r%u,=",
-						 reg2, imm5, imm5, imm5, reg2, reg2);
+		r_strbuf_appendf (&op->esil, "31,r%u,>>,?{,%u,32,-,%u,1,<<,--,<<,}{,0,},%u,r%u,>>,|,r%u,=",
+						  reg2, (ut8)imm5, (ut8)imm5, (ut8)imm5, reg2, reg2);
 		update_flags (op, V810_FLAG_CY | V810_FLAG_S | V810_FLAG_Z);
 		clear_flags (op, V810_FLAG_OV);
 		break;
@@ -235,8 +256,8 @@ static int v810_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len)
 		break;
 	case V810_SHL_IMM5:
 		op->type = R_ANAL_OP_TYPE_SHL;
-		r_strbuf_appendf (&op->esil, "%hhu,r%u,<<=",
-						 IMM5(word1), REG2(word1));
+		r_strbuf_appendf (&op->esil, "%u,r%u,<<=",
+						  (ut8)IMM5(word1), REG2(word1));
 		update_flags (op, V810_FLAG_CY | V810_FLAG_S | V810_FLAG_Z);
 		clear_flags (op, V810_FLAG_OV);
 		break;
@@ -426,7 +447,7 @@ static int set_reg_profile(RAnal *anal) {
 	return r_reg_set_profile_string (anal->reg, p);
 }
 
-struct r_anal_plugin_t r_anal_plugin_v810 = {
+RAnalPlugin r_anal_plugin_v810 = {
 	.name = "v810",
 	.desc = "V810 code analysis plugin",
 	.license = "LGPL3",
@@ -438,7 +459,7 @@ struct r_anal_plugin_t r_anal_plugin_v810 = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_v810,
 	.version = R2_VERSION

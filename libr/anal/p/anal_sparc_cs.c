@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2014-2015 - pancake */
+/* radare2 - LGPL - Copyright 2014-2017 - pancake */
 
 #include <r_anal.h>
 #include <r_lib.h>
@@ -9,18 +9,105 @@
 #error Old Capstone not supported
 #endif
 
-#define esilprintf(op, fmt, arg...) r_strbuf_setf (&op->esil, fmt, ##arg)
+#define esilprintf(op, fmt, ...) r_strbuf_setf (&op->esil, fmt, ##__VA_ARGS__)
 #define INSOP(n) insn->detail->sparc.operands[n]
 #define INSCC insn->detail->sparc.cc
+
+static void opex(RStrBuf *buf, csh handle, cs_insn *insn) {
+	int i;
+	r_strbuf_init (buf);
+	r_strbuf_append (buf, "{");
+	cs_sparc *x = &insn->detail->sparc;
+	r_strbuf_append (buf, "\"operands\":[");
+	for (i = 0; i < x->op_count; i++) {
+		cs_sparc_op *op = &x->operands[i];
+		if (i > 0) {
+			r_strbuf_append (buf, ",");
+		}
+		r_strbuf_append (buf, "{");
+		switch (op->type) {
+		case SPARC_OP_REG:
+			r_strbuf_append (buf, "\"type\":\"reg\"");
+			r_strbuf_appendf (buf, ",\"value\":\"%s\"", cs_reg_name (handle, op->reg));
+			break;
+		case SPARC_OP_IMM:
+			r_strbuf_append (buf, "\"type\":\"imm\"");
+			r_strbuf_appendf (buf, ",\"value\":%"PFMT64d, op->imm);
+			break;
+		case SPARC_OP_MEM:
+			r_strbuf_append (buf, "\"type\":\"mem\"");
+			if (op->mem.base != SPARC_REG_INVALID) {
+				r_strbuf_appendf (buf, ",\"base\":\"%s\"", cs_reg_name (handle, op->mem.base));
+			}
+			r_strbuf_appendf (buf, ",\"disp\":%"PFMT64d"", op->mem.disp);
+			break;
+		default:
+			r_strbuf_append (buf, "\"type\":\"invalid\"");
+			break;
+		}
+		r_strbuf_append (buf, "}");
+	}
+	r_strbuf_append (buf, "]");
+	r_strbuf_append (buf, "}");
+}
+
+static int parse_reg_name(RRegItem *reg, csh handle, cs_insn *insn, int reg_num) {
+	if (!reg) {
+		return -1;
+	}
+	switch (INSOP (reg_num).type) {
+	case SPARC_OP_REG:
+		reg->name = (char *)cs_reg_name (handle, INSOP (reg_num).reg);
+		break;
+	case SPARC_OP_MEM:
+		if (INSOP (reg_num).mem.base != SPARC_REG_INVALID) {
+			reg->name = (char *)cs_reg_name (handle, INSOP (reg_num).mem.base);
+			break;
+		}
+	default:
+		break;
+	}
+	return 0;
+}
+
+static void op_fillval(RAnalOp *op, csh handle, cs_insn *insn) {
+	static RRegItem reg;
+	switch (op->type & R_ANAL_OP_TYPE_MASK) {
+	case R_ANAL_OP_TYPE_LOAD:
+		if (INSOP(0).type == SPARC_OP_MEM) {
+			ZERO_FILL (reg);
+			op->src[0] = r_anal_value_new ();
+			op->src[0]->reg = &reg;
+			parse_reg_name (op->src[0]->reg, handle, insn, 0);
+			op->src[0]->delta = INSOP(0).mem.disp;
+		}
+		break;
+	case R_ANAL_OP_TYPE_STORE:
+		if (INSOP(1).type == SPARC_OP_MEM) {
+			ZERO_FILL (reg);
+			op->dst = r_anal_value_new ();
+			op->dst->reg = &reg;
+			parse_reg_name (op->dst->reg, handle, insn, 1);
+			op->dst->delta = INSOP(1).mem.disp;
+		}
+		break;
+	}
+}
 
 static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 	static csh handle = 0;
 	static int omode;
 	cs_insn *insn;
 	int mode, n, ret;
-	mode = CS_MODE_BIG_ENDIAN;
-	if (!strcmp (a->cpu, "v9"))
+
+	if (!a->big_endian) {
+		return -1;
+	}
+
+	mode = CS_MODE_LITTLE_ENDIAN;
+	if (!strcmp (a->cpu, "v9")) {
 		mode |= CS_MODE_V9;
+	}
 	if (mode != omode) {
 		cs_close (&handle);
 		handle = 0;
@@ -43,11 +130,16 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 	r_strbuf_init (&op->esil);
 	// capstone-next
 	n = cs_disasm (handle, (const ut8*)buf, len, addr, 1, &insn);
-	if (n<1) {
+	if (n < 1) {
 		op->type = R_ANAL_OP_TYPE_ILL;
 	} else {
+		opex (&op->opex, handle, insn);
 		op->size = insn->size;
+		op->id = insn->id;
 		switch (insn->id) {
+		case SPARC_INS_INVALID:
+			op->type = R_ANAL_OP_TYPE_ILL;
+			break;
 		case SPARC_INS_MOV:
 			op->type = R_ANAL_OP_TYPE_MOV;
 			break;
@@ -120,17 +212,21 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			switch (INSOP(0).type) {
 			case SPARC_OP_REG:
 				op->type = R_ANAL_OP_TYPE_CJMP;
-				if (INSCC != SPARC_CC_ICC_N) // never
-					op->jump = INSOP(1).imm;
-				if (INSCC != SPARC_CC_ICC_A) // always
-					op->fail = addr+4;
+				if (INSCC != SPARC_CC_ICC_N) { // never
+					op->jump = INSOP (1).imm;
+				}
+				if (INSCC != SPARC_CC_ICC_A) { // always
+					op->fail = addr + 4;
+				}
 				break;
 			case SPARC_OP_IMM:
 				op->type = R_ANAL_OP_TYPE_CJMP;
-				if (INSCC != SPARC_CC_ICC_N) // never
-					op->jump = INSOP(0).imm;
-				if (INSCC != SPARC_CC_ICC_A) // always
-					op->fail = addr+4;
+				if (INSCC != SPARC_CC_ICC_N) { // never
+					op->jump = INSOP (0).imm;
+				}
+				if (INSCC != SPARC_CC_ICC_A) { // always
+					op->fail = addr + 4;
+				}
 				break;
 			default:
 				// MEM?
@@ -212,6 +308,9 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			op->type = R_ANAL_OP_TYPE_DIV;
 			break;
 		}
+		if (a->fillval) {
+			op_fillval (op, handle, insn);
+		}
 		cs_free (insn, n);
 	}
 	return op->size;
@@ -269,6 +368,10 @@ static int set_reg_profile(RAnal *anal) {
 	return r_reg_set_profile_string (anal->reg, p);
 }
 
+static int archinfo(RAnal *anal, int q) {
+	return 4; /* :D */
+}
+
 RAnalPlugin r_anal_plugin_sparc_cs = {
 	.name = "sparc",
 	.desc = "Capstone SPARC analysis",
@@ -276,12 +379,13 @@ RAnalPlugin r_anal_plugin_sparc_cs = {
 	.license = "BSD",
 	.arch = "sparc",
 	.bits = 32|64,
+	.archinfo = archinfo,
 	.op = &analop,
 	.set_reg_profile = &set_reg_profile,
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_sparc_cs,
 	.version = R2_VERSION

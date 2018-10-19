@@ -6,7 +6,7 @@
 
 #include <r_lib.h>
 #include <r_util.h>
-#include <r_flags.h>
+#include <r_flag.h>
 #include <r_anal.h>
 #include <r_parse.h>
 
@@ -45,11 +45,13 @@ static int replace(int argc, const char *argv[], char *newstr) {
 							strcpy(newstr+k, w);
 							k += strlen(w)-1;
 						}
-					} else newstr[k] = ops[i].str[j];
+					} else {
+						newstr[k] = ops[i].str[j];
+					}
 				}
 				newstr[k]='\0';
 			}
-			return R_TRUE;
+			return true;
 		}
 	}
 
@@ -62,7 +64,7 @@ static int replace(int argc, const char *argv[], char *newstr) {
 		}
 	}
 
-	return R_FALSE;
+	return false;
 }
 
 static int parse(RParse *p, const char *data, char *str) {
@@ -75,17 +77,20 @@ static int parse(RParse *p, const char *data, char *str) {
 
 	// malloc can be slow here :?
 	buf = strdup (data);
+	if (!buf) {
+		return false;
+	}
 	r_str_trim_head (buf);
 
 	ptr = strchr (buf, '#');
 	if (ptr) {
 		*ptr = 0;
-		r_str_chop (buf);
+		r_str_trim (buf);
 	}
 	if (*buf == '.' || buf[strlen(buf)-1] == ':') {
 		free (buf);
 		strcpy (str, data);
-		return R_TRUE;
+		return true;
 	}
 	r_str_replace_char (buf, '$', 0);
 	r_str_replace_char (buf, '%', 0);
@@ -96,8 +101,9 @@ static int parse(RParse *p, const char *data, char *str) {
 	if (ptr) {
 		*ptr = 0;
 		num = (char*)r_str_lchr (buf, ' ');
-		if (!num)
-			num = (char*)r_str_lchr (buf, ',');
+		if (!num) {
+			num = (char *)r_str_lchr (buf, ',');
+		}
 		if (num) {
 			n = atoi (num+1);
 			*ptr = '[';
@@ -105,21 +111,29 @@ static int parse(RParse *p, const char *data, char *str) {
 			ptr = (char*)r_str_lchr (buf, ']');
 			if (n && ptr) {
 				char *rest = strdup (ptr+1);
-				if(n>0) sprintf (ptr, "+%d]%s", n, rest);
-				else sprintf (ptr, "%d]%s", n, rest);
+				if (n > 0) {
+					sprintf (ptr, "+%d]%s", n, rest);
+				} else {
+					sprintf (ptr, "%d]%s", n, rest);
+				}
 				free (rest);
 			}
-		} else *ptr = '[';
+		} else {
+			*ptr = '[';
+		}
 	}
 
 	if (*buf) {
 		*w0 = *w1 = *w2 = *w3 = 0;
 		ptr = strchr (buf, ' ');
-		if (ptr == NULL)
+		if (!ptr) {
 			ptr = strchr (buf, '\t');
+		}
 		if (ptr) {
 			*ptr = '\0';
-			for (++ptr; *ptr==' '; ptr++);
+			for (++ptr; *ptr == ' '; ptr++) {
+				;
+			}
 			strncpy (w0, buf, sizeof(w0) - 1);
 			strncpy (w1, ptr, sizeof(w1) - 1);
 
@@ -127,13 +141,17 @@ static int parse(RParse *p, const char *data, char *str) {
 			ptr = strchr (ptr, ',');
 			if (ptr) {
 				*ptr = '\0';
-				for (++ptr; *ptr==' '; ptr++);
+				for (++ptr; *ptr == ' '; ptr++) {
+					;
+				}
 				strncpy (w1, optr, sizeof(w1)-1);
 				strncpy (w2, ptr, sizeof(w2)-1);
 				ptr = strchr (ptr, ',');
 				if (ptr) {
 					*ptr = '\0';
-					for (++ptr; *ptr==' '; ptr++);
+					for (++ptr; *ptr == ' '; ptr++) {
+						;
+					}
 					strncpy (w2, optr, sizeof(w2)-1);
 					strncpy (w3, ptr, sizeof(w3)-1);
 				}
@@ -143,17 +161,18 @@ static int parse(RParse *p, const char *data, char *str) {
 			const char *wa[] = { w0, w1, w2, w3 };
 			int nw = 0;
 			for (i=0; i<4; i++) {
-				if (wa[i][0] != '\0')
-				nw++;
+				if (wa[i][0] != '\0') {
+					nw++;
+				}
 			}
 			replace (nw, wa, str);
 		}
 	}
 	free (buf);
-	return R_TRUE;
+	return true;
 }
 
-struct r_parse_plugin_t r_parse_plugin_att2intel = {
+RParsePlugin r_parse_plugin_att2intel = {
 	.name = "att2intel",
 	.desc = "X86 att 2 intel plugin",
 	.init = NULL,
@@ -162,7 +181,7 @@ struct r_parse_plugin_t r_parse_plugin_att2intel = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_PARSE,
 	.data = &r_parse_plugin_att2intel,
 	.version = R2_VERSION

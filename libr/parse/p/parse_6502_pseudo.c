@@ -6,7 +6,7 @@
 
 #include <r_lib.h>
 #include <r_util.h>
-#include <r_flags.h>
+#include <r_flag.h>
 #include <r_anal.h>
 #include <r_parse.h>
 
@@ -70,15 +70,19 @@ static int replace(int argc, const char *argv[], char *newstr, ADDR_TYPE type) {
 		{0, "sei", "set_interrupt"},
 		{1, "jsr", "1()"},
 		{0, NULL}};
-	if (!newstr) return false;
+	if (!newstr) {
+		return false;
+	}
 
 	for (i = 0; ops[i].op != NULL; i++) {
 		if (ops[i].narg) {
-			if (argc - 1 != ops[i].narg) continue;
+			if (argc - 1 != ops[i].narg) {
+				continue;
+			}
 		}
 		if (!strcmp(ops[i].op, argv[0])) {
 			for (j = k = 0; ops[i].str[j] != '\0'; j++, k++) {
-				if (ops[i].str[j] >= '0' && ops[i].str[j] <= '9') {
+				if (IS_DIGIT(ops[i].str[j])) {
 					const char *w = argv[ops[i].str[j] - '0'];
 					if (w != NULL) {
 						strcpy(newstr + k, w);
@@ -109,7 +113,9 @@ static int replace(int argc, const char *argv[], char *newstr, ADDR_TYPE type) {
 static ADDR_TYPE addr_type(const char *str) {
 	if (strchr(str, '(')) {
 		char *e = strchr (str, ')');
-		if (!e) return NORM;
+		if (!e) {
+			return NORM;
+		}
 		char *o = strchr (e, ',');
 		return (o) ? IND_IDX : IDX_IND;
 	}
@@ -122,9 +128,11 @@ static int parse(RParse *p, const char *data, char *str) {
 	char *buf, *ptr, *optr;
 	ADDR_TYPE atype;
 
-	if (len >= sizeof(w0)) return false;
+	if (len >= sizeof (w0)) {
+		return false;
+	}
 	// malloc can be slow here :?
-	if ((buf = malloc (len + 1)) == NULL) {
+	if (!(buf = malloc (len + 1))) {
 		return false;
 	}
 	memcpy (buf, data, len + 1);
@@ -135,19 +143,23 @@ static int parse(RParse *p, const char *data, char *str) {
 		r_str_replace_char (buf, ')', ' ');
 		*w0 = *w1 = *w2 = '\0';
 		ptr = strchr (buf, ' ');
-		if (ptr == NULL) ptr = strchr (buf, '\t');
+		if (!ptr) {
+			ptr = strchr (buf, '\t');
+		}
 		if (ptr) {
 			*ptr = '\0';
-			for (++ptr; *ptr == ' '; ptr++)
+			for (++ptr; *ptr == ' '; ptr++) {
 				;
+			}
 			strncpy (w0, buf, sizeof(w0) - 1);
 			strncpy (w1, ptr, sizeof(w1) - 1);
 			optr = ptr;
 			ptr = strchr (ptr, ',');
 			if (ptr) {
 				*ptr = '\0';
-				for (++ptr; *ptr == ' '; ptr++)
+				for (++ptr; *ptr == ' '; ptr++) {
 					;
+				}
 				strncpy (w1, optr, sizeof(w1) - 1);
 				strncpy (w2, ptr, sizeof(w2) - 1);
 			}
@@ -158,7 +170,9 @@ static int parse(RParse *p, const char *data, char *str) {
 		const char *wa[] = {w0, w1, w2};
 		int nw = 0;
 		for (i = 0; i < 3; i++) {
-			if (wa[i][0]) nw++;
+			if (wa[i][0]) {
+				nw++;
+			}
 		}
 		replace (nw, wa, str, atype);
 	}
@@ -168,14 +182,15 @@ static int parse(RParse *p, const char *data, char *str) {
 	return true;
 }
 
-struct r_parse_plugin_t r_parse_plugin_6502_pseudo = {
+RParsePlugin r_parse_plugin_6502_pseudo = {
 	.name = "6502.pseudo",
 	.desc = "6502 pseudo syntax",
 	.parse = parse,
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {.type = R_LIB_TYPE_PARSE,
+R_API RLibStruct radare_plugin = {
+	.type = R_LIB_TYPE_PARSE,
 	.data = &r_parse_plugin_6502_pseudo,
 	.version = R2_VERSION};
 #endif

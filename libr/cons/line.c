@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2007-2013 - pancake */
+/* radare - LGPL - Copyright 2007-2017 - pancake */
 
 #include <r_cons.h>
 
@@ -14,8 +14,12 @@ R_API RLine *r_line_new() {
 	I.hist_down = NULL;
 	I.prompt = strdup ("> ");
 	I.contents = NULL;
-	if (!r_line_dietline_init ())
+#if __WINDOWS__ && !__CYGWIN__
+	I.ansicon = r_sys_getenv ("ANSICON");
+#endif
+	if (!r_line_dietline_init ()) {
 		eprintf ("error: r_line_dietline_init\n");
+	}
 	return &I;
 }
 

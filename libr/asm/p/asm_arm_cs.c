@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2013-2016 - pancake */
+/* radare2 - LGPL - Copyright 2013-2018 - pancake */
 
 #include <r_asm.h>
 #include <r_lib.h>
@@ -6,12 +6,43 @@
 #include "../arch/arm/asm-arm.h"
 
 bool arm64ass(const char *str, ut64 addr, ut32 *op);
-static int check_features(RAsm *a, cs_insn *insn);
 static csh cd = 0;
+
+#include "cs_mnemonics.c"
+
+static bool check_features(RAsm *a, cs_insn *insn) {
+	int i;
+	if (!insn || !insn->detail) {
+		return true;
+	}
+	for (i = 0; i < insn->detail->groups_count; i++) {
+		int id = insn->detail->groups[i];
+		switch (id) {
+		case ARM_GRP_ARM:
+		case ARM_GRP_THUMB:
+		case ARM_GRP_THUMB1ONLY:
+		case ARM_GRP_THUMB2:
+			continue;
+		default:
+			if (id < 128) {
+				continue;
+			}
+		}
+		const char *name = cs_group_name (cd, id);
+		if (!name) {
+			return true;
+		}
+		if (!strstr (a->features, name)) {
+			return false;
+		}
+	}
+	return true;
+}
 
 static int disassemble(RAsm *a, RAsmOp *op, const ut8 *buf, int len) {
 	static int omode = -1;
 	static int obits = 32;
+	bool disp_hash = a->immdisp;
 	cs_insn* insn = NULL;
 	cs_mode mode = 0;
 	int ret, n = 0;
@@ -24,13 +55,26 @@ static int disassemble(RAsm *a, RAsmOp *op, const ut8 *buf, int len) {
 		obits = a->bits;
 	}
 
-	if (a->features && strstr (a->features, "mclass"))
-		mode |= CS_MODE_MCLASS;
-	if (a->features && strstr (a->features, "v8"))
-		mode |= CS_MODE_V8;
-	op->size = 4;
-	op->buf_asm[0] = 0;
-	if (cd == 0) {
+	if (a->cpu) {
+		if (strstr (a->cpu, "cortex")) {
+			mode |= CS_MODE_MCLASS;
+		}
+		if (a->bits != 64) {
+			if (strstr (a->cpu, "v8")) {
+				mode |= CS_MODE_V8;
+			}
+		}
+	}
+	if (a->features && a->bits != 64) {
+		if (strstr (a->features, "v8")) {
+			mode |= CS_MODE_V8;
+		}
+	}
+	if (op) {
+		op->size = 4;
+		r_strbuf_set (&op->buf_asm, "");
+	}
+	if (!cd || mode != omode) {
 		ret = (a->bits == 64)?
 			cs_open (CS_ARCH_ARM64, mode, &cd):
 			cs_open (CS_ARCH_ARM, mode, &cd);
@@ -39,48 +83,53 @@ static int disassemble(RAsm *a, RAsmOp *op, const ut8 *buf, int len) {
 			goto beach;
 		}
 	}
-	if (a->syntax == R_ASM_SYNTAX_REGNUM) {
-		cs_option (cd, CS_OPT_SYNTAX, CS_OPT_SYNTAX_NOREGNAME);
-	} else cs_option (cd, CS_OPT_SYNTAX, CS_OPT_SYNTAX_DEFAULT);
-	if (a->features && *a->features) {
-		cs_option (cd, CS_OPT_DETAIL, CS_OPT_ON);
-	} else {
-		cs_option (cd, CS_OPT_DETAIL, CS_OPT_OFF);
+	cs_option (cd, CS_OPT_SYNTAX, (a->syntax == R_ASM_SYNTAX_REGNUM)
+			? CS_OPT_SYNTAX_NOREGNAME
+			: CS_OPT_SYNTAX_DEFAULT);
+	cs_option (cd, CS_OPT_DETAIL, (a->features && *a->features)
+		? CS_OPT_ON: CS_OPT_OFF);
+	if (!buf) {
+		goto beach;
 	}
 	n = cs_disasm (cd, buf, R_MIN (4, len), a->pc, 1, &insn);
-	if (n < 1) {
+	if (n < 1 || insn->size < 1) {
 		ret = -1;
 		goto beach;
 	}
-	op->size = 0;
-	if (insn->size<1) {
-		ret = -1;
-		goto beach;
+	if (op) {
+		op->size = 0;
 	}
 	if (a->features && *a->features) {
-		if (!check_features (a, insn)) {
+		if (!check_features (a, insn) && op) {
 			op->size = insn->size;
-			strcpy (op->buf_asm, "illegal");
+			r_strbuf_set (&op->buf_asm, "illegal");
 		}
 	}
-	if (!op->size) {
+	if (op && !op->size) {
 		op->size = insn->size;
-		snprintf (op->buf_asm, R_ASM_BUFSIZE, "%s%s%s",
+		char *buf_asm = sdb_fmt ("%s%s%s",
 			insn->mnemonic,
 			insn->op_str[0]?" ":"",
 			insn->op_str);
-		r_str_rmch (op->buf_asm, '#');
+		if (!disp_hash) {
+			r_str_rmch (buf_asm, '#');
+		}
+		r_strbuf_set (&op->buf_asm, buf_asm);
 	}
 	cs_free (insn, n);
 	beach:
-	//cs_close (&cd);
-	if (!op->buf_asm[0])
-		strcpy (op->buf_asm, "invalid");
-	return op->size;
+	cs_close (&cd);
+	if (op) {
+		if (!*r_strbuf_get (&op->buf_asm)) {
+			r_strbuf_set (&op->buf_asm, "invalid");
+		}
+		return op->size;
+	}
+	return ret;
 }
 
 static int assemble(RAsm *a, RAsmOp *op, const char *buf) {
-	const bool is_thumb = a->bits==16? true: false;
+	const bool is_thumb = (a->bits == 16);
 	int opsize;
 	ut32 opcode;
 	if (a->bits == 64) {
@@ -94,20 +143,32 @@ static int assemble(RAsm *a, RAsmOp *op, const char *buf) {
 			return -1;
 		}
 	}
-	if (opcode == UT32_MAX)
+	if (opcode == UT32_MAX) {
 		return -1;
+	}
+	ut8 opbuf[4];
 	if (is_thumb) {
 		const int o = opcode >> 16;
-		opsize = o>0? 4: 2; //(o&0x80 && ((o&0xe0)==0xe0))? 4: 2;
+		opsize = o > 0? 4: 2;
 		if (opsize == 4) {
-			r_write_be32(op->buf, opcode);
+			if (a->big_endian) {
+				r_write_le16 (opbuf, opcode >> 16);
+				r_write_le16 (opbuf + 2, opcode & UT16_MAX);
+			} else {
+				r_write_be32 (opbuf, opcode);
+			}
 		} else if (opsize == 2) {
-			r_write_be16(op->buf, opcode & UT16_MAX);
+			r_write_be16 (opbuf, opcode & UT16_MAX);
 		}
 	} else {
 		opsize = 4;
-		r_write_be32(op->buf, opcode);
+		if (a->big_endian) {
+			r_write_le32 (opbuf, opcode);
+		} else {
+			r_write_be32 (opbuf, opcode);
+		}
 	}
+	r_strbuf_setbin (&op->buf, opbuf, opsize);
 // XXX. thumb endian assembler needs no swap
 	return opsize;
 }
@@ -115,51 +176,27 @@ static int assemble(RAsm *a, RAsmOp *op, const char *buf) {
 RAsmPlugin r_asm_plugin_arm_cs = {
 	.name = "arm",
 	.desc = "Capstone ARM disassembler",
-	.cpus = "v8,cortex-m",
+	.cpus = "v8,cortex",
+	.features = "v8",
 	.license = "BSD",
 	.arch = "arm",
 	.bits = 16 | 32 | 64,
 	.endian = R_SYS_ENDIAN_LITTLE | R_SYS_ENDIAN_BIG,
 	.disassemble = &disassemble,
+	.mnemonics = mnemonics,
 	.assemble = &assemble,
-	.features = "no-mclass,v8"
 #if 0
-		// arm32 and arm64
-		"crypto,databarrier,divide,fparmv8,multpro,neon,t2extractpack,"
-		"thumb2dsp,trustzone,v4t,v5t,v5te,v6,v6t2,v7,v8,vfp2,vfp3,vfp4,"
-		"arm,mclass,notmclass,thumb,thumb1only,thumb2,prev8,fpvmlx,"
-		"mulops,crc,dpvfp,v6m"
+	// arm32 and arm64
+	"crypto,databarrier,divide,fparmv8,multpro,neon,t2extractpack,"
+	"thumb2dsp,trustzone,v4t,v5t,v5te,v6,v6t2,v7,v8,vfp2,vfp3,vfp4,"
+	"arm,mclass,notmclass,thumb,thumb1only,thumb2,prev8,fpvmlx,"
+	"mulops,crc,dpvfp,v6m"
 #endif
 };
 
-static int check_features(RAsm *a, cs_insn *insn) {
-	const char *name;
-	int i;
-	if (!insn || !insn->detail)
-		return 1;
-	for (i=0; i< insn->detail->groups_count; i++) {
-		int id = insn->detail->groups[i];
-		if (id == ARM_GRP_ARM)
-			continue;
-		if (id == ARM_GRP_THUMB)
-			continue;
-		if (id == ARM_GRP_THUMB1ONLY)
-			continue;
-		if (id == ARM_GRP_THUMB2)
-			continue;
-		if (id<128) continue;
-		name = cs_group_name (cd, id);
-		if (!name) return 1;
-		if (!strstr (a->features, name)) {
-			//eprintf ("CANNOT FIND %s\n", name);
-			return 0;
-		}
-	}
-	return 1;
-}
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ASM,
 	.data = &r_asm_plugin_arm_cs,
 	.version = R2_VERSION

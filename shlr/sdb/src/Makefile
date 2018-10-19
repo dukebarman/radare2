@@ -1,18 +1,20 @@
 include ../config.mk
 
-CFLAGS+= -g -ggdb
-OBJ=cdb.o buffer.o cdb_make.o ls.o ht.o sdb.o num.o base64.o match.o
+CFLAGS+=-g
+OBJ=cdb.o buffer.o cdb_make.o ls.o sdbht.o ht.o sdb.o num.o base64.o match.o
 OBJ+=json.o ns.o lock.o util.o disk.o query.o array.o fmt.o journal.o
-
-SOBJ=$(subst .o,._o,${OBJ})
-
+OBJ+=dict.o
+SOBJ=$(subst .o,.o.o,${OBJ})
+WITHPIC?=1
 BIN=sdb${EXT_EXE}
 
 .PHONY: all static shared clean
 
 all: ${BIN} sdb_version.h
 	${MAKE} static
+ifeq ($(WITHPIC),1)
 	${MAKE} shared
+endif
 
 bin: $(BIN)
 
@@ -72,7 +74,7 @@ ifneq ($(SILENT),)
 endif
 	${CC} -c ${CPPFLAGS} ${CFLAGS} ${CFLAGS_SHARED} -o $@ $<
 
-%._o: %.c
+%.o.o: %.c
 ifneq ($(SILENT),)
 	@echo CC PIC $<
 endif

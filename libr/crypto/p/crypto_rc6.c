@@ -9,8 +9,8 @@
 #define BLOCK_SIZE 16
 #define r 20
 #define w 32
-#define ROTL(x,y) (((x)<<(y&(w-1))) | ((x)>>(w-(y&(w-1)))))
-#define ROTR(x,y) (((x)>>(y&(w-1))) | ((x)<<(w-(y&(w-1)))))
+#define ROTL(x,y) (((x)<<((y)&(w-1))) | ((x)>>(w-((y)&(w-1)))))
+#define ROTR(x,y) (((x)>>((y)&(w-1))) | ((x)<<(w-((y)&(w-1)))))
 
 struct rc6_state{
 	ut32 S[2*r+4];
@@ -29,7 +29,11 @@ static bool rc6_init(struct rc6_state *const state, const ut8 *key, int keylen, 
 	int u = w / 8;
 	int c = keylen / u;
 	int t = 2 * r + 4;
+#ifdef _MSC_VER
+	ut32 *L = (ut32*) malloc (sizeof (ut32) * c);
+#else
 	ut32 L[c];
+#endif
 	ut32 A = 0, B = 0, k = 0, j = 0;
 	ut32 v = 3 * t; //originally v = 2 * ((c > t) ? c : t);
 
@@ -53,15 +57,18 @@ static bool rc6_init(struct rc6_state *const state, const ut8 *key, int keylen, 
 		k = (k + 1) % t;
 		j = (j + 1) % c;
 	}
-	
+
 	state->key_size = keylen/8;
+#ifdef _MSC_VER
+	free (L);
+#endif
 	return true;
 }
 
 static void rc6_encrypt(struct rc6_state *const state, const ut8 *inbuf, ut8 *outbuf) {
 	ut32 t, u;
 	ut32 aux;
-	ut32 data[BLOCK_SIZE/4];
+	ut32 data[BLOCK_SIZE / 4];
 	int i;
 	int off = 0;
 	for (i = 0; i < BLOCK_SIZE / 4; i++) {
@@ -149,7 +156,7 @@ static void rc6_decrypt(struct rc6_state *const state, const ut8 *inbuf, ut8 *ou
 
 static struct rc6_state st;
 
-static int rc6_set_key(RCrypto *cry, const ut8 *key, int keylen, int mode, int direction) {
+static bool rc6_set_key(RCrypto *cry, const ut8 *key, int keylen, int mode, int direction) {
 	return rc6_init (&st, key, keylen, direction);
 }
 
@@ -161,7 +168,7 @@ static bool rc6_use(const char *algo) {
 	return !strcmp (algo, "rc6");
 }
 
-static int update(RCrypto *cry, const ut8 *buf, int len) {
+static bool update(RCrypto *cry, const ut8 *buf, int len) {
 	if (len % BLOCK_SIZE != 0) { //let user handle with with pad.
 		eprintf ("Input should be multiple of 128bit.\n");
 		return false;
@@ -170,7 +177,9 @@ static int update(RCrypto *cry, const ut8 *buf, int len) {
 	const int blocks = len / BLOCK_SIZE;
 
 	ut8 *obuf = calloc (1, len);
-	if (!obuf) return false;
+	if (!obuf) {
+		return false;
+	}
 
 	int i;
 	if (flag) {
@@ -182,13 +191,13 @@ static int update(RCrypto *cry, const ut8 *buf, int len) {
 			rc6_encrypt (&st, buf + BLOCK_SIZE * i, obuf + BLOCK_SIZE * i);
 		}
 	}
-	
+
 	r_crypto_append (cry, obuf, len);
 	free (obuf);
-	return 0;
+	return true;
 }
 
-static int final(RCrypto *cry, const ut8 *buf, int len) {
+static bool final(RCrypto *cry, const ut8 *buf, int len) {
 	return update (cry, buf, len);
 }
 
@@ -202,7 +211,7 @@ RCryptoPlugin r_crypto_plugin_rc6 = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = { 
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_CRYPTO,
 	.data = &r_crypto_plugin_rc6,
 	.version = R2_VERSION

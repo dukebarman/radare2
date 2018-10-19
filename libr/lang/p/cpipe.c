@@ -73,14 +73,13 @@ static int lang_cpipe_run(RLang *lang, const char *code, int len) {
 	return true;
 }
 
-static struct r_lang_plugin_t r_lang_plugin_cpipe = {
+static RLangPlugin r_lang_plugin_cpipe = {
 	.name = "cpipe",
 	.ext = "c2",
 	.desc = "C r2pipe scripting",
-	.help = NULL,
+	.license = "LGPL",
 	.run = lang_cpipe_run,
 	.init = (void*)lang_cpipe_init,
 	.fini = NULL,
 	.run_file = (void*)lang_cpipe_file,
-	.set_argv = NULL,
 };

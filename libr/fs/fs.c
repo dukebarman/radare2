@@ -1,35 +1,47 @@
-/* radare2 - LGPL - Copyright 2011-2016 - pancake */
+/* radare2 - LGPL - Copyright 2011-2018 - pancake */
 
 #include <r_fs.h>
-#include "../config.h"
+#include "config.h"
 #include "types.h"
 #include <errno.h>
 #include "../../shlr/grub/include/grub/msdos_partition.h"
 
 #if WITH_GPL
-#ifndef USE_GRUB
-#define USE_GRUB 1
-#endif
+# ifndef USE_GRUB
+#  define USE_GRUB 1
+# endif
 #endif
 
 R_LIB_VERSION (r_fs);
 
-static RFSPlugin *fs_static_plugins[] = { R_FS_STATIC_PLUGINS };
+static RFSPlugin* fs_static_plugins[] = {
+	R_FS_STATIC_PLUGINS
+};
 
-R_API RFS *r_fs_new() {
+R_API RFS* r_fs_new() {
 	int i;
-	RFSPlugin *static_plugin;
-	RFS *fs = R_NEW0 (RFS);
+	RFSPlugin* static_plugin;
+	RFS* fs = R_NEW0 (RFS);
 	if (fs) {
 		fs->view = R_FS_VIEW_NORMAL;
 		fs->roots = r_list_new ();
-		fs->roots->free = (RListFree)r_fs_root_free;
+		if (!fs->roots) {
+			r_fs_free (fs);
+			return NULL;
+		}
+		fs->roots->free = (RListFree) r_fs_root_free;
 		fs->plugins = r_list_new ();
+		if (!fs->plugins) {
+			r_fs_free (fs);
+			return NULL;
+		}
 		fs->plugins->free = free;
 		// XXX fs->roots->free = r_fs_plugin_free;
 		for (i = 0; fs_static_plugins[i]; i++) {
 			static_plugin = R_NEW (RFSPlugin);
-			if (!static_plugin) continue;
+			if (!static_plugin) {
+				continue;
+			}
 			memcpy (static_plugin, fs_static_plugins[i], sizeof (RFSPlugin));
 			r_fs_add (fs, static_plugin);
 			free (static_plugin);
@@ -38,69 +50,100 @@ R_API RFS *r_fs_new() {
 	return fs;
 }
 
-R_API RFSPlugin *r_fs_plugin_get(RFS *fs, const char *name) {
-	RListIter *iter;
-	RFSPlugin *p;
+R_API RFSPlugin* r_fs_plugin_get(RFS* fs, const char* name) {
+	RListIter* iter;
+	RFSPlugin* p;
+	if (!fs || !name) {
+		return NULL;
+	}
 	r_list_foreach (fs->plugins, iter, p) {
-		if (!strcmp (p->name, name))
+		if (!strcmp (p->name, name)) {
 			return p;
+		}
 	}
 	return NULL;
 }
 
-R_API void r_fs_free(RFS *fs) {
-	if (!fs) return;
+R_API void r_fs_free(RFS* fs) {
+	if (!fs) {
+		return;
+	}
 	//r_io_free (fs->iob.io);
-	r_list_free (fs->plugins);
+	//root makes use of plugin so revert to avoid UaF
 	r_list_free (fs->roots);
+	r_list_free (fs->plugins);
 	free (fs);
 }
 
 /* plugins */
-R_API void r_fs_add(RFS *fs, RFSPlugin *p) {
+R_API void r_fs_add(RFS* fs, RFSPlugin* p) {
 	// TODO: find coliding plugin name
-	if (p && p->init)
+	if (p && p->init) {
 		p->init ();
-	RFSPlugin *sp = R_NEW (RFSPlugin);
-	memcpy (sp, p, sizeof (RFSPlugin));
+	}
+	RFSPlugin* sp = R_NEW0 (RFSPlugin);
+	if (!sp) {
+		return;
+	}
+	if (p) {
+		memcpy (sp, p, sizeof (RFSPlugin));
+	}
 	r_list_append (fs->plugins, sp);
 }
 
-R_API void r_fs_del(RFS *fs, RFSPlugin *p) {
+R_API void r_fs_del(RFS* fs, RFSPlugin* p) {
 	// TODO: implement r_fs_del
 }
 
 /* mountpoint */
-R_API RFSRoot *r_fs_mount(RFS *fs, const char *fstype, const char *path, ut64 delta) {
-	RFSPlugin *p;
-	RFSRoot *root;
-	RFSFile *file;
-	RList *list;
-	RListIter *iter;
-	char *str;
+R_API RFSRoot* r_fs_mount(RFS* fs, const char* fstype, const char* path, ut64 delta) {
+	RFSPlugin* p;
+	RFSRoot* root;
+	RFSFile* file;
+	RList* list;
+	RListIter* iter;
+	char* str;
 	int len, lenstr;
+	char *heapFsType = NULL;
 
 	if (path[0] != '/') {
-		eprintf ("r_fs_mount: invalid mountpoint\n");
+		eprintf ("r_fs_mount: invalid mountpoint %s\n", path);
 		return NULL;
 	}
+	if (!fstype || !*fstype) {
+		heapFsType = r_fs_name (fs, delta);
+		fstype = (const char *)heapFsType;
+	}
 	if (!(p = r_fs_plugin_get (fs, fstype))) {
-		eprintf ("r_fs_mount: Invalid filesystem type\n");
+		// eprintf ("r_fs_mount: Invalid filesystem type\n");
+		free (heapFsType);
 		return NULL;
 	}
 	str = strdup (path);
-	r_str_chop_path (str);
+	if (!str) {
+		free (heapFsType);
+		return NULL;
+	}
+	r_str_trim_path (str);
+	if (*str && strchr (str + 1, '/')) {
+		eprintf ("r_fs_mount: mountpoint must have no subdirectories\n");
+		free (heapFsType);
+		return NULL;
+	}
 	/* Check if path exists */
 	r_list_foreach (fs->roots, iter, root) {
 		len = strlen (root->path);
 		lenstr = strlen (str);
 		if (!strncmp (str, root->path, len)) {
-			if (len < lenstr && str[len] != '/')
+			if (len < lenstr && str[len] != '/') {
 				continue;
-			else if (len > lenstr && root->path[lenstr] == '/')
+			}
+			if (len > lenstr && root->path[lenstr] == '/') {
 				continue;
+			}
 			eprintf ("r_fs_mount: Invalid mount point\n");
 			free (str);
+			free (heapFsType);
 			return NULL;
 		}
 	}
@@ -108,48 +151,54 @@ R_API RFSRoot *r_fs_mount(RFS *fs, const char *fstype, const char *path, ut64 de
 	if (file) {
 		r_fs_close (fs, file);
 		eprintf ("r_fs_mount: Invalid mount point\n");
+		free (heapFsType);
 		free (str);
 		return NULL;
-	} else {
-		list = r_fs_dir (fs, str);
-		if (!r_list_empty (list)) {
-			//XXX: list need free ??
-			eprintf ("r_fs_mount: Invalid mount point\n");
-			free (str);
-			return NULL;
-		}
+	}
+	list = r_fs_dir (fs, str);
+	if (!r_list_empty (list)) {
+		//XXX: list need free ??
+		eprintf ("r_fs_mount: Invalid mount point\n");
+		free (str);
+		free (heapFsType);
+		return NULL;
 	}
 	root = r_fs_root_new (str, delta);
 	root->p = p;
 	//memcpy (&root->iob, &fs->iob, sizeof (root->iob));
 	root->iob = fs->iob;
+	root->cob = fs->cob;
 	if (!p->mount (root)) {
-		eprintf ("r_fs_mount: Cannot mount partition\n");
 		free (str);
+		free (heapFsType);
 		r_fs_root_free (root);
 		return NULL;
 	}
 	r_list_append (fs->roots, root);
 	eprintf ("Mounted %s on %s at 0x%" PFMT64x "\n", fstype, str, delta);
 	free (str);
+	free (heapFsType);
 	return root;
 }
 
-static inline int r_fs_match(const char *root, const char *path, int len) {
+static inline bool r_fs_match(const char* root, const char* path, int len) {
 	return (!strncmp (path, root, len));
 }
 
-R_API bool r_fs_umount(RFS *fs, const char *path) {
+R_API bool r_fs_umount(RFS* fs, const char* path) {
 	int len;
-	RFSRoot *root;
-	RListIter *iter, *riter = NULL;
+	RFSRoot* root;
+	RListIter* iter, * riter = NULL;
 
-	if (!path) return false;
+	if (!path) {
+		return false;
+	}
 
 	r_list_foreach (fs->roots, iter, root) {
 		len = strlen (root->path);
-		if (r_fs_match (path, root->path, len))
+		if (r_fs_match (path, root->path, len)) {
 			riter = iter;
+		}
 	}
 	if (riter) {
 		r_list_delete (fs->roots, riter);
@@ -158,21 +207,26 @@ R_API bool r_fs_umount(RFS *fs, const char *path) {
 	return false;
 }
 
-R_API RList *r_fs_root(RFS *fs, const char *p) {
-	RList *roots = r_list_new ();
-	RFSRoot *root;
-	RListIter *iter;
+R_API RList* r_fs_root(RFS* fs, const char* p) {
+	RList* roots;
+	RFSRoot* root;
+	RListIter* iter;
 	int len, olen;
-	char *path = strdup (p);
-	r_str_chop_path (path);
+	char* path = strdup (p);
+	if (!path) {
+		return NULL;
+	}
+	roots = r_list_new ();
+	r_str_trim_path (path);
 	r_list_foreach (fs->roots, iter, root) {
 		len = strlen (root->path);
 		if (r_fs_match (path, root->path, len)) {
 			olen = strlen (path);
-			if (len == 1 || olen == len)
+			if (len == 1 || olen == len) {
 				r_list_append (roots, root);
-			else if (olen > len && path[len] == '/')
+			} else if (olen > len && path[len] == '/') {
 				r_list_append (roots, root);
+			}
 		}
 	}
 	free (path);
@@ -180,24 +234,27 @@ R_API RList *r_fs_root(RFS *fs, const char *p) {
 }
 
 /* filez */
-R_API RFSFile *r_fs_open(RFS *fs, const char *p) {
-	RFSRoot *root;
-	RList *roots;
-	RListIter *iter;
-	RFSFile *f = NULL;
-	const char *dir;
-	char *path = strdup (p);
-	//r_str_chop_path (path);
+R_API RFSFile* r_fs_open(RFS* fs, const char* p) {
+	RFSRoot* root;
+	RList* roots;
+	RListIter* iter;
+	RFSFile* f = NULL;
+	const char* dir;
+	char* path = strdup (p);
+	//r_str_trim_path (path);
 	roots = r_fs_root (fs, path);
 	if (!r_list_empty (roots)) {
 		r_list_foreach (roots, iter, root) {
 			if (root && root->p && root->p->open) {
-				if (strlen (root->path) == 1)
+				if (strlen (root->path) == 1) {
 					dir = path;
-				else dir = path + strlen (root->path);
+				} else {
+					dir = path + strlen (root->path);
+				}
 				f = root->p->open (root, dir);
-				if (f)
+				if (f) {
 					break;
+				}
 			}
 		}
 	}
@@ -207,44 +264,56 @@ R_API RFSFile *r_fs_open(RFS *fs, const char *p) {
 }
 
 // TODO: close or free?
-R_API void r_fs_close(RFS *fs, RFSFile *file) {
-	if (fs && file && file->p && file->p->close)
-		file->p->close (file);
+R_API void r_fs_close(RFS* fs, RFSFile* file) {
+	if (fs && file) {
+		R_FREE (file->data);
+		if (file->p && file->p->close) {
+			file->p->close (file);
+		}
+	}
 }
 
-R_API int r_fs_read(RFS *fs, RFSFile *file, ut64 addr, int len) {
+R_API int r_fs_read(RFS* fs, RFSFile* file, ut64 addr, int len) {
 	if (len < 1) {
 		eprintf ("r_fs_read: too short read\n");
 		return false;
 	}
 	if (fs && file) {
 		free (file->data);
-		file->data = malloc (len + 1);
-		if (file->p && file->p->read) {
+		file->data = calloc (1, len + 1);
+		// file->data_len = len;
+		if (file->p && file->data && file->p->read) {
 			file->p->read (file, addr, len);
 			return true;
-		} else eprintf ("r_fs_read: file->p->read is null\n");
+		} else {
+			eprintf ("r_fs_read: file->p->read is null\n");
+		}
 	}
 	return false;
 }
 
-R_API RList *r_fs_dir(RFS *fs, const char *p) {
-	RList *roots, *ret = NULL;
-	RFSRoot *root;
-	RListIter *iter;
-	const char *dir;
-	char *path = strdup (p);
-	r_str_chop_path (path);
+R_API RList* r_fs_dir(RFS* fs, const char* p) {
+	RList* roots, * ret = NULL;
+	RFSRoot* root;
+	RListIter* iter;
+	const char* dir;
+	char* path = strdup (p);
+	r_str_trim_path (path);
 	roots = r_fs_root (fs, path);
 	r_list_foreach (roots, iter, root) {
 		if (root) {
-			if (strlen (root->path) == 1)
+			if (strlen (root->path) == 1) {
 				dir = path;
-			else dir = path + strlen (root->path);
-			if (!*dir) dir = "/";
+			} else {
+				dir = path + strlen (root->path);
+			}
+			if (!*dir) {
+				dir = "/";
+			}
 			ret = root->p->dir (root, dir, fs->view);
-			if (ret)
+			if (ret) {
 				break;
+			}
 		}
 	}
 	free (roots);
@@ -252,15 +321,16 @@ R_API RList *r_fs_dir(RFS *fs, const char *p) {
 	return ret;
 }
 
-R_API int r_fs_dir_dump(RFS *fs, const char *path, const char *name) {
-	RList *list;
-	RListIter *iter;
-	RFSFile *file, *item;
-	char *str, *npath;
+R_API int r_fs_dir_dump(RFS* fs, const char* path, const char* name) {
+	RList* list;
+	RListIter* iter;
+	RFSFile* file, * item;
+	char* str, * npath;
 
 	list = r_fs_dir (fs, path);
-	if (!list)
+	if (!list) {
 		return false;
+	}
 	if (!r_sys_mkdir (name)) {
 		if (r_sys_mkdir_failed ()) {
 			eprintf ("Cannot create \"%s\"\n", name);
@@ -268,11 +338,13 @@ R_API int r_fs_dir_dump(RFS *fs, const char *path, const char *name) {
 		}
 	}
 	r_list_foreach (list, iter, file) {
-		if (!strcmp (file->name, ".") || !strcmp (file->name, ".."))
+		if (!strcmp (file->name, ".") || !strcmp (file->name, "..")) {
 			continue;
-		str = (char *)malloc (strlen (name) + strlen (file->name) + 2);
-		if (!str)
+		}
+		str = (char*) malloc (strlen (name) + strlen (file->name) + 2);
+		if (!str) {
 			return false;
+		}
 		strcpy (str, name);
 		strcat (str, "/");
 		strcat (str, file->name);
@@ -284,16 +356,28 @@ R_API int r_fs_dir_dump(RFS *fs, const char *path, const char *name) {
 		strcpy (npath, path);
 		strcat (npath, "/");
 		strcat (npath, file->name);
-		if (file->type != R_FS_FILE_TYPE_DIRECTORY) {
+		switch (file->type) {
+		// DONT FOLLOW MOUNTPOINTS
+		case R_FS_FILE_TYPE_DIRECTORY:
+			if (!r_fs_dir_dump (fs, npath, str)) {
+				free (npath);
+				free (str);
+				return false;
+			}
+			break;
+		case R_FS_FILE_TYPE_REGULAR:
 			item = r_fs_open (fs, npath);
 			if (item) {
 				r_fs_read (fs, item, 0, item->size);
-				r_file_dump (str, item->data, item->size, 0);
+				if (!r_file_dump (str, item->data, item->size, 0)) {
+					free (npath);
+					free (str);
+					return false;
+				}
 				free (item->data);
 				r_fs_close (fs, item);
 			}
-		} else {
-			r_fs_dir_dump (fs, npath, str);
+			break;
 		}
 		free (npath);
 		free (str);
@@ -301,19 +385,22 @@ R_API int r_fs_dir_dump(RFS *fs, const char *path, const char *name) {
 	return true;
 }
 
-static void r_fs_find_off_aux(RFS *fs, const char *name, ut64 offset, RList *list) {
-	RList *dirs;
-	RListIter *iter;
-	RFSFile *item, *file;
-	char *found = NULL;
+static void r_fs_find_off_aux(RFS* fs, const char* name, ut64 offset, RList* list) {
+	RList* dirs;
+	RListIter* iter;
+	RFSFile* item, * file;
+	char* found = NULL;
 
 	dirs = r_fs_dir (fs, name);
 	r_list_foreach (dirs, iter, item) {
-		if (!strcmp (item->name, ".") || !strcmp (item->name, ".."))
+		if (!strcmp (item->name, ".") || !strcmp (item->name, "..")) {
 			continue;
+		}
 
-		found = (char *)malloc (strlen (name) + strlen (item->name) + 2);
-		if (!found) break;
+		found = (char*) malloc (strlen (name) + strlen (item->name) + 2);
+		if (!found) {
+			break;
+		}
 		strcpy (found, name);
 		strcat (found, "/");
 		strcat (found, item->name);
@@ -324,9 +411,9 @@ static void r_fs_find_off_aux(RFS *fs, const char *name, ut64 offset, RList *lis
 			file = r_fs_open (fs, found);
 			if (file) {
 				r_fs_read (fs, file, 0, file->size);
-				if (file->off == offset)
+				if (file->off == offset) {
 					r_list_append (list, found);
-				free (file->data);
+				}
 				r_fs_close (fs, file);
 			}
 		}
@@ -334,36 +421,42 @@ static void r_fs_find_off_aux(RFS *fs, const char *name, ut64 offset, RList *lis
 	}
 }
 
-R_API RList *r_fs_find_off(RFS *fs, const char *name, ut64 off) {
-	RList *list = r_list_new ();
+R_API RList* r_fs_find_off(RFS* fs, const char* name, ut64 off) {
+	RList* list = r_list_new ();
+	if (!list) {
+		return NULL;
+	}
 	list->free = free;
 	r_fs_find_off_aux (fs, name, off, list);
 	return list;
 }
 
-static void r_fs_find_name_aux(RFS *fs, const char *name, const char *glob, RList *list) {
-	RList *dirs;
-	RListIter *iter;
-	RFSFile *item;
-	char *found;
+static void r_fs_find_name_aux(RFS* fs, const char* name, const char* glob, RList* list) {
+	RList* dirs;
+	RListIter* iter;
+	RFSFile* item;
+	char* found;
 
 	dirs = r_fs_dir (fs, name);
 	r_list_foreach (dirs, iter, item) {
 		if (r_str_glob (item->name, glob)) {
-			found = (char *)malloc (strlen (name) + strlen (item->name) + 2);
-			if (!found)
+			found = (char*) malloc (strlen (name) + strlen (item->name) + 2);
+			if (!found) {
 				break;
+			}
 			strcpy (found, name);
 			strcat (found, "/");
 			strcat (found, item->name);
 			r_list_append (list, found);
 		}
-		if (!strcmp (item->name, ".") || !strcmp (item->name, ".."))
+		if (!strcmp (item->name, ".") || !strcmp (item->name, "..")) {
 			continue;
+		}
 		if (item->type == R_FS_FILE_TYPE_DIRECTORY) {
-			found = (char *)malloc (strlen (name) + strlen (item->name) + 2);
-			if (!found)
+			found = (char*) malloc (strlen (name) + strlen (item->name) + 2);
+			if (!found) {
 				break;
+			}
 			strcpy (found, name);
 			strcat (found, "/");
 			strcat (found, item->name);
@@ -373,26 +466,31 @@ static void r_fs_find_name_aux(RFS *fs, const char *name, const char *glob, RLis
 	}
 }
 
-R_API RList *r_fs_find_name(RFS *fs, const char *name, const char *glob) {
-	RList *list = r_list_new ();
-	list->free = free;
+R_API RList* r_fs_find_name(RFS* fs, const char* name, const char* glob) {
+	RList* list = r_list_newf (free);
+	if (!list) {
+		return NULL;
+	}
 	r_fs_find_name_aux (fs, name, glob, list);
 	return list;
 }
 
-R_API RFSFile *r_fs_slurp(RFS *fs, const char *path) {
-	RFSFile *file = NULL;
-	RFSRoot *root;
-	RList *roots = r_fs_root (fs, path);
-	RListIter *iter;
+R_API RFSFile* r_fs_slurp(RFS* fs, const char* path) {
+	RFSFile* file = NULL;
+	RFSRoot* root;
+	RList* roots = r_fs_root (fs, path);
+	RListIter* iter;
 	r_list_foreach (roots, iter, root) {
-		if (!root || !root->p)
+		if (!root || !root->p) {
 			continue;
+		}
 		if (root->p->open && root->p->read && root->p->close) {
 			file = root->p->open (root, path);
-			if (file)
+			if (file) {
 				root->p->read (file, 0, file->size); //file->data
-			else eprintf ("r_fs_slurp: cannot open file\n");
+			}else {
+				eprintf ("r_fs_slurp: cannot open file\n");
+			}
 		} else {
 			if (root->p->slurp) {
 				free (roots);
@@ -409,9 +507,10 @@ R_API RFSFile *r_fs_slurp(RFS *fs, const char *path) {
 #include "../../shlr/grub/include/grubfs.h"
 
 #if USE_GRUB
-static int grub_parhook(void *disk, struct grub_partition *par, void *closure) {
-	RList *list = (RList *)closure;
-	RFSPartition *p = r_fs_partition_new (
+static int grub_parhook(void* disk, void* ptr, void* closure) {
+	struct grub_partition* par = ptr;
+	RList* list = (RList*) closure;
+	RFSPartition* p = r_fs_partition_new (
 		r_list_length (list),
 		par->start * 512, 512 * par->len);
 	p->type = par->msdostype;
@@ -420,9 +519,9 @@ static int grub_parhook(void *disk, struct grub_partition *par, void *closure) {
 }
 #endif
 
-static int fs_parhook(void *disk, void *ptr, void *closure) {
-	RFSPartition *par = ptr;
-	RList *list = (RList *)closure;
+static int fs_parhook(void* disk, void* ptr, void* closure) {
+	RFSPartition* par = ptr;
+	RList* list = (RList*) closure;
 	r_list_append (list, par);
 	return 0;
 }
@@ -434,23 +533,25 @@ static RFSPartitionType partitions[] = {
 	{"dos", &fs_part_dos, fs_parhook},
 #if USE_GRUB
 	/* WARNING GPL code */
-	{"msdos", (void *) & grub_msdos_partition_map, (void *)grub_parhook},
-	{"apple", &grub_apple_partition_map},
-	{"sun", &grub_sun_partition_map},
-	{"sunpc", &grub_sun_pc_partition_map},
-	{"amiga", &grub_amiga_partition_map},
-	{"bsdlabel", &grub_bsdlabel_partition_map},
-	{"gpt", &grub_gpt_partition_map},
+	{"msdos", &grub_msdos_partition_map, grub_parhook},
+	{"apple", &grub_apple_partition_map, grub_parhook},
+	{"sun", &grub_sun_partition_map, grub_parhook},
+	{"sunpc", &grub_sun_pc_partition_map, grub_parhook},
+	{"amiga", &grub_amiga_partition_map, grub_parhook},
+	{"bsdlabel", &grub_bsdlabel_partition_map, grub_parhook},
+	{"gpt", &grub_gpt_partition_map, grub_parhook},
 #endif
 	// XXX: In BURG all bsd partition map are in bsdlabel
 	//{ "openbsdlabel", &grub_openbsd_partition_map },
 	//{ "netbsdlabel", &grub_netbsd_partition_map },
 	//{ "acorn", &grub_acorn_partition_map },
-	{ NULL }};
+	{ NULL }
+};
 
-R_API const char *r_fs_partition_type_get(int n) {
-	if (n < 0 || n >= R_FS_PARTITIONS_LENGTH)
+R_API const char* r_fs_partition_type_get(int n) {
+	if (n < 0 || n >= R_FS_PARTITIONS_LENGTH) {
 		return NULL;
+	}
 	return partitions[n].name;
 }
 
@@ -458,7 +559,7 @@ R_API int r_fs_partition_get_size() {
 	return R_FS_PARTITIONS_LENGTH;
 }
 
-R_API RList *r_fs_partitions(RFS *fs, const char *ptype, ut64 delta) {
+R_API RList* r_fs_partitions(RFS* fs, const char* ptype, ut64 delta) {
 	int i, cur = -1;
 	for (i = 0; partitions[i].name; i++) {
 		if (!strcmp (ptype, partitions[i].name)) {
@@ -467,16 +568,16 @@ R_API RList *r_fs_partitions(RFS *fs, const char *ptype, ut64 delta) {
 		}
 	}
 	if (cur != -1) {
-		RList *list = r_list_newf ((RListFree)r_fs_partition_free);
+		RList* list = r_list_newf ((RListFree) r_fs_partition_free);
 #if USE_GRUB
-		void *disk = NULL;
-		if (partitions[i].iterate == (void *)&grub_parhook) {
-			struct grub_partition_map *gpt = partitions[i].ptr;
+		void* disk = NULL;
+		if (partitions[i].iterate == grub_parhook) {
+			struct grub_partition_map* gpt = partitions[i].ptr;
 			grubfs_bind_io (NULL, 0);
-			disk = (void *)grubfs_disk (&fs->iob);
+			disk = (void*) grubfs_disk (&fs->iob);
 			if (gpt) {
 				gpt->iterate (disk,
-					(void *)partitions[i].iterate, list);
+					(void*) partitions[i].iterate, list);
 			}
 			grubfs_free (disk);
 		} else {
@@ -488,21 +589,23 @@ R_API RList *r_fs_partitions(RFS *fs, const char *ptype, ut64 delta) {
 		}
 		return list;
 	}
-	if (ptype && *ptype)
+	if (ptype && *ptype) {
 		eprintf ("Unknown partition type '%s'.\n", ptype);
+	}
 	eprintf ("Supported types:\n");
-	for (i = 0; partitions[i].name; i++)
+	for (i = 0; partitions[i].name; i++) {
 		eprintf (" %s", partitions[i].name);
+	}
 	eprintf ("\n");
 	return NULL;
 }
 
-R_API int r_fs_partition_type_str(const char *type) {
+R_API int r_fs_partition_type_str(const char* type) {
 	// TODO: implement
 	return 0;
 }
 
-R_API const char *r_fs_partition_type(const char *part, int type) {
+R_API const char* r_fs_partition_type(const char* part, int type) {
 	// XXX: part is ignored O_o
 	switch (type) {
 	case GRUB_PC_PARTITION_TYPE_FAT12:
@@ -512,18 +615,24 @@ R_API const char *r_fs_partition_type(const char *part, int type) {
 	case GRUB_PC_PARTITION_TYPE_FAT32_LBA:
 	case GRUB_PC_PARTITION_TYPE_FAT16_LBA:
 		return strdup ("fat");
+
 	case GRUB_PC_PARTITION_TYPE_EXT2FS:
 		return strdup ("ext2");
+
 	case GRUB_PC_PARTITION_TYPE_MINIX:
 	case GRUB_PC_PARTITION_TYPE_LINUX_MINIX:
 		return strdup ("minix");
+
 	case GRUB_PC_PARTITION_TYPE_NTFS:
 		return strdup ("ntfs");
+
 	case GRUB_PC_PARTITION_TYPE_EXTENDED:
 	case GRUB_PC_PARTITION_TYPE_LINUX_EXTENDED:
 		return strdup ("ext3");
+
 	case GRUB_PC_PARTITION_TYPE_HFS:
 		return strdup ("hfs");
+
 	case GRUB_PC_PARTITION_TYPE_WIN95_EXTENDED: // fat?
 	case GRUB_PC_PARTITION_TYPE_EZD:
 	case GRUB_PC_PARTITION_TYPE_VSTAFS:
@@ -538,187 +647,51 @@ R_API const char *r_fs_partition_type(const char *part, int type) {
 	}
 }
 
-R_API char *r_fs_name(RFS *fs, ut64 offset) {
+R_API char* r_fs_name(RFS* fs, ut64 offset) {
 	ut8 buf[1024];
 	int i, j, len, ret = false;
 
 	for (i = 0; fstypes[i].name; i++) {
-		RFSType *f = &fstypes[i];
+		RFSType* f = &fstypes[i];
 		len = R_MIN (f->buflen, sizeof (buf) - 1);
 		fs->iob.read_at (fs->iob.io, offset + f->bufoff, buf, len);
 		if (f->buflen > 0 && !memcmp (buf, f->buf, f->buflen)) {
 			ret = true;
 			len = R_MIN (f->bytelen, sizeof (buf));
 			fs->iob.read_at (fs->iob.io, offset + f->byteoff, buf, len);
-			for (j = 0; j < f->bytelen; j++) {
+			// for (j = 0; j < f->bytelen; j++) {
+			for (j = 0; j < len; j++) {
 				if (buf[j] != f->byte) {
 					ret = false;
 					break;
 				}
 			}
-			if (ret) return strdup (f->name);
+			if (ret) {
+				return strdup (f->name);
+			}
 		}
 	}
 	return NULL;
 }
 
-#define PROMT_PATH_BUFSIZE 1024
-
-R_API int r_fs_prompt(RFS *fs, const char *root) {
-	char buf[PROMT_PATH_BUFSIZE];
-	char path[PROMT_PATH_BUFSIZE];
-	char str[2048];
-	char *input;
-	RList *list = NULL;
-	RListIter *iter;
-	RFSFile *file = NULL;
-
-	if (root && *root) {
-		strncpy (buf, root, sizeof (buf) - 1);
-		r_str_chop_path (buf);
-		list = r_fs_root (fs, buf);
-		if (r_list_empty (list)) {
-			printf ("Unknown root\n");
-			r_list_free (list);
-			return false;
-		}
-		strncpy (path, buf, sizeof (path) - 1);
-	} else strcpy (path, "/");
-
-	for (;;) {
-		printf ("[%s]> ", path);
-		fflush (stdout);
-		fgets (buf, sizeof (buf) - 1, stdin);
-		if (feof (stdin)) break;
-		buf[strlen (buf) - 1] = '\0';
-		if (!strcmp (buf, "q") || !strcmp (buf, "exit")) {
-			r_list_free (list);
-			return true;
-		}
-		if (buf[0] == '!') {
-			r_sandbox_system (buf + 1, 1);
-		} else if (!memcmp (buf, "ls", 2)) {
-			if (buf[2] == ' ') {
-				if (buf[3] != '/') {
-					strncpy (str, path, sizeof (str) - 1);
-					strcat (str, "/");
-					strncat (str, buf + 3, sizeof (buf) - 1);
-					list = r_fs_dir (fs, str);
-				} else list = r_fs_dir (fs, buf + 3);
-			} else list = r_fs_dir (fs, path);
-			if (list) {
-				r_list_foreach (list, iter, file)
-					printf ("%c %s\n", file->type, file->name);
-			} else eprintf ("Unknown path: %s\n", path);
-		} else if (!strncmp (buf, "pwd", 3)) {
-			eprintf ("%s\n", path);
-		} else if (!memcmp (buf, "cd ", 3)) {
-			char opath[PROMT_PATH_BUFSIZE];
-			strncpy (opath, path, sizeof (opath) - 1);
-			input = buf + 3;
-			while (*input == ' ')
-				input++;
-			if (!strcmp (input, "..")) {
-				char *p = (char *)r_str_lchr (path, '/');
-				if (p) p[(p == path)? 1: 0] = 0;
-			} else {
-				strcat (path, "/");
-				if (*input == '/') {
-					strncpy (path, input, sizeof (opath) - 1);
-				} else {
-					if ((strlen (path) + strlen (input)) >= sizeof (path)) {
-						// overflow
-						path[0] = 0;
-					} else {
-						strcat (path, input);
-					}
-				}
-				path[sizeof (path) - 1] = 0;
-			}
-			r_str_chop_path (path);
-			list = r_fs_dir (fs, path);
-			if (r_list_empty (list)) {
-				strcpy (path, opath);
-				eprintf ("cd: unknown path: %s\n", path);
-			}
-		} else if (!memcmp (buf, "cat ", 4)) {
-			input = buf + 3;
-			while (input[0] == ' ')
-				input++;
-			if (input[0] == '/') {
-				if (root)
-					strncpy (str, root, sizeof (str) - 1);
-				else str[0] = 0;
-			} else strncpy (str, path, sizeof (str) - 1);
-			strncat (str, "/", sizeof (str) - strlen (str) - 1);
-			strncat (str, input, sizeof (str) - strlen (str) - 1);
-			file = r_fs_open (fs, str);
-			if (file) {
-				r_fs_read (fs, file, 0, file->size);
-				write (1, file->data, file->size);
-				free (file->data);
-				r_fs_close (fs, file);
-			} else eprintf ("Cannot open file\n");
-		} else if (!memcmp (buf, "mount", 5)) {
-			RFSRoot *r;
-			r_list_foreach (fs->roots, iter, r) {
-				eprintf ("%s %s\n", r->path, r->p->name);
-			}
-		} else if (!memcmp (buf, "get ", 4)) {
-			char *s = 0;
-			input = buf + 3;
-			while (input[0] == ' ')
-				input++;
-			if (input[0] == '/') {
-				if (root) {
-					s = malloc (strlen (root) + strlen (input) + 2);
-					if (!s) goto beach;
-					strcpy (s, root);
-				}
-			} else {
-				s = malloc (strlen (path) + strlen (input) + 2);
-				if (!s) goto beach;
-				strcpy (s, path);
-			}
-			if (!s) {
-				s = malloc (strlen (input) + 32);
-				if (!s) goto beach;
-			}
-			strcat (s, "/");
-			strcat (s, input);
-			file = r_fs_open (fs, s);
-			if (file) {
-				r_fs_read (fs, file, 0, file->size);
-				r_file_dump (input, file->data, file->size, 0);
-				free (file->data);
-				r_fs_close (fs, file);
-			} else {
-				input -= 2; //OMFG!!!! O_O
-				memcpy (input, "./", 2);
-				if (!r_fs_dir_dump (fs, s, input))
-					printf ("Cannot open file\n");
-			}
-			free (s);
-		} else if (!memcmp (buf, "help", 4) || !strcmp (buf, "?")) {
-			eprintf (
-				"Commands:\n"
-				" !cmd        ; escape to system\n"
-				" ls [path]   ; list current directory\n"
-				" cd path     ; change current directory\n"
-				" cat file    ; print contents of file\n"
-				" get file    ; dump file to disk\n"
-				" mount       ; list mount points\n"
-				" q/exit      ; leave prompt mode\n"
-				" ?/help      ; show this help\n");
-		} else eprintf ("Unknown command %s\n", buf);
-	}
-beach:
-	clearerr (stdin);
-	printf ("\n");
-	r_list_free (list);
-	return true;
+R_API void r_fs_view(RFS* fs, int view) {
+	fs->view = view;
 }
 
-R_API void r_fs_view(RFS *fs, int view) {
-	fs->view = view;
+R_API bool r_fs_check(RFS *fs, const char *p) {
+	RFSRoot *root;
+	RListIter *iter;
+	char* path = strdup (p);
+	if (!path) {
+		return false;
+	}
+	r_str_trim_path (path);
+	r_list_foreach (fs->roots, iter, root) {
+		if (r_fs_match (path, root->path, strlen (root->path))) {
+			free (path);
+			return true;
+		}
+	}
+	free (path);
+	return false;
 }

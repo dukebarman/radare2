@@ -8,8 +8,9 @@
 static ut8 bfvm_op(BfvmCPU *c) {
 	// XXX: this is slow :(
 	ut8 buf[4] = {0};
-	if (c && c->iob.read_at && !c->iob.read_at (c->iob.io, c->eip, buf, 4))
+	if (c && c->iob.read_at && !c->iob.read_at (c->iob.io, c->eip, buf, 4)) {
 		return 0xff;
+	}
 	return buf[0];
 }
 
@@ -42,8 +43,9 @@ R_API int bfvm_init(BfvmCPU *c, ut32 size, int circular) {
 
 	/* data */
 	c->mem = (ut8 *)malloc (size);
-	if (c->mem == NULL)
+	if (!c->mem) {
 		return 0;
+	}
 	memset (c->mem, '\0', size);
 
 	/* setup */
@@ -81,11 +83,12 @@ R_API BfvmCPU *bfvm_free(BfvmCPU *c) {
 }
 
 R_API ut8 *bfvm_get_ptr_at(BfvmCPU *c, ut64 at) {
-	if (at >= c->base) at -= c->base;
-	//if (at<0) at = c->circular? c->size-2: 0;
-	else if (at >= c->size) at = c->circular? 0: c->size-1;
-	//if (at<0) return c->mem;
-	return c->mem+at;
+	if (at >= c->base) {
+		at -= c->base;
+	} else if (at >= c->size) {
+		at = c->circular? 0: c->size-1;
+	}
+	return c->mem + at;
 }
 
 R_API ut8 *bfvm_get_ptr(BfvmCPU *c) {
@@ -100,26 +103,30 @@ R_API ut8 bfvm_get(BfvmCPU *c) {
 
 R_API void bfvm_inc(BfvmCPU *c) {
 	ut8 *mem = bfvm_get_ptr (c);
-	if (mem != NULL)
+	if (mem != NULL) {
 		mem[0]++;
+	}
 }
 
 R_API void bfvm_dec(BfvmCPU *c) {
 	ut8 *mem = bfvm_get_ptr (c);
-	if (mem != NULL)
+	if (mem != NULL) {
 		mem[0]--;
+	}
 }
 
 R_API int bfvm_reg_set(BfvmCPU *c, const char *str) {
 	char *ptr = strchr (str, ' ');
-	if (ptr == NULL)
+	if (!ptr) {
 		return 0;
-	if (strstr (str, "eip"))
+	}
+	if (strstr (str, "eip")) {
 		c->eip = r_num_math (NULL, ptr+1);
-	else if (strstr (str, "esp"))
+	} else if (strstr (str, "esp")) {
 		c->esp = r_num_math (NULL, ptr+1);
-	else if (strstr (str, "ptr"))
-		c->ptr = r_num_math (NULL, ptr+1);
+	} else if (strstr (str, "ptr")) {
+		c->ptr = r_num_math (NULL, ptr + 1);
+	}
 	return 1;
 }
 
@@ -128,8 +135,9 @@ R_API void bfvm_peek(BfvmCPU *c) {
 	int idx = c->input_idx;
 	ut8 *ptr = bfvm_get_ptr (c);
 
-	if (idx >= c->input_size)
+	if (idx >= c->input_size) {
 		idx = 0;
+	}
 
 	if (ptr) {
 		*ptr = c->input_buf[idx];
@@ -160,8 +168,9 @@ R_API int bfvm_trace_op(BfvmCPU *c, ut8 op) {
 	case ']':
 		g = bfvm_get (c);
 		eprintf ("%c  ; [ptr] = %d\n", op, g);
-		if (g!= 0)
+		if (g != 0) {
 			eprintf ("[");
+		}
 		break;
 	}
 	return 0;
@@ -179,7 +188,7 @@ R_API int bfvm_step(BfvmCPU *c, int over) {
 			/* trap */
 			return 1;
 		case '.':
-			bfvm_get_ptr (c);
+			//bfvm_get_ptr (c);
 			bfvm_poke (c);
 			break;
 		case ',':

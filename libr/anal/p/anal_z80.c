@@ -6,25 +6,35 @@
 #include <r_lib.h>
 #include <r_asm.h>
 #include <r_anal.h>
-#include "../../asm/arch/z80_cr/z80_tab.h"
+#include "../../asm/arch/z80/z80_tab.h"
 
-static void z80_op_size(const ut8 *data, int *size, int *size_prefix) {
-	int type;
-	switch(data[0]) {
+static void z80_op_size(const ut8 *data, int len, int *size, int *size_prefix) {
+	int type = 0;
+	if (len <1) {
+		return;
+	}
+	switch (data[0]) {
 	case 0xed:
-		type = dd[data[1]].type;
+		if (len > 1) {
+			int idx = z80_ed_branch_index_res (data[1]);
+			type = ed[idx].type;
+		}
 		break;
 	case 0xcb:
 		type = Z80_OP16;
 		break;
 	case 0xdd:
-		type = dd[data[1]].type;
+		if (len >1) {
+			type = dd[z80_fddd_branch_index_res(data[1])].type;
+		}
 		break;
 	case 0xfd:
-		type = dd[data[1]].type;
+		if (len > 1) {
+			type = fd[z80_fddd_branch_index_res(data[1])].type;
+		}
 		break;
 	default:
-		type = dd[data[0]].type;
+		type = z80_op[data[0]].type;
 		break;
 	}
 
@@ -47,7 +57,7 @@ static void z80_op_size(const ut8 *data, int *size, int *size_prefix) {
 
 static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int len) {
 	int ilen;
-	z80_op_size (data, &ilen, &op->nopcode);
+	z80_op_size (data, len, &ilen, &op->nopcode);
 
 	memset (op, '\0', sizeof (RAnalOp));
 	op->addr = addr;
@@ -216,7 +226,7 @@ static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int
 
 	case 0x10: // djnz
 		op->type = R_ANAL_OP_TYPE_CJMP;
-		op->jump = addr + (st8)data[1] + ilen;
+		op->jump = addr + (st8)data[1] + ilen ;
 		op->fail = addr + ilen;
 		break;
 	case 0x18: // jr xx
@@ -229,7 +239,7 @@ static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int
 	case 0x30:
 	case 0x38:
 		op->type = R_ANAL_OP_TYPE_CJMP;
-		op->jump = addr + (st8)data[1] + ilen;
+		op->jump = addr + ((len>1)? (st8)data[1]:0) + ilen;
 		op->fail = addr + ilen;
 		break;
 
@@ -243,12 +253,12 @@ static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int
 	case 0xf2:
 	case 0xfa:
 		op->type = R_ANAL_OP_TYPE_CJMP;
-		op->jump = data[1] | data[2] << 8;
+		op->jump = (len > 2)? data[1] | data[2] << 8: 0;
 		op->fail = addr + ilen;
 		break;
 	case 0xc3: // jp xx
 		op->type = R_ANAL_OP_TYPE_JMP;
-		op->jump = data[1] | data[2] << 8;
+		op->jump = (len > 2)? data[1] | data[2] << 8: 0;
 		break;
 	case 0xe9: // jp (HL)
 		op->type = R_ANAL_OP_TYPE_UJMP;
@@ -298,7 +308,7 @@ static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int
 	case 0xec: // pe
 	case 0xfc: // m
 		op->type = R_ANAL_OP_TYPE_CCALL;
-		op->jump = data[1] | data[2] << 8;
+		op->jump = (len>2)? data[1] | data[2] << 8: 0;
 		op->fail = addr + ilen;
 		break;
 
@@ -359,17 +369,65 @@ static int z80_anal_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int
 	return ilen;
 }
 
-struct r_anal_plugin_t r_anal_plugin_z80 = {
+static int set_reg_profile(RAnal *anal) {
+	const char *p =
+		"=PC	mpc\n"
+		"=SP	sp\n"
+		"=A0	af\n"
+		"=A1	bc\n"
+		"=A2	de\n"
+		"=A3	hl\n"
+
+		"gpr	mpc	.32	0	0\n"
+		"gpr	pc	.16	0	0\n"
+		"gpr	m	.16	2	0\n"
+
+		"gpr	sp	.16	4	0\n"
+
+		"gpr	af	.16	6	0\n"
+		"gpr	f	.8	6	0\n"
+		"gpr	a	.8	7	0\n"
+		"gpr	Z	.1	.55	0\n"
+		"gpr	N	.1	.54	0\n"
+		"gpr	H	.1	.53	0\n"
+		"gpr	C	.1	.52	0\n"
+
+		"gpr	bc	.16	8	0\n"
+		"gpr	c	.8	8	0\n"
+		"gpr	b	.8	9	0\n"
+
+		"gpr	de	.16	10	0\n"
+		"gpr	e	.8	10	0\n"
+		"gpr	d	.8	11	0\n"
+
+		"gpr	hl	.16	12	0\n"
+		"gpr	l	.8	12	0\n"
+		"gpr	h	.8	13	0\n"
+
+		"gpr	mbcrom	.16	14	0\n"
+		"gpr	mbcram	.16	16	0\n"
+
+		"gpr	ime	.1	18	0\n";
+	return r_reg_set_profile_string (anal->reg, p);
+}
+
+static int archinfo(RAnal *anal, int q) {
+	return 1;
+}
+
+RAnalPlugin r_anal_plugin_z80 = {
 	.name = "z80",
 	.arch = "z80",
 	.license = "LGPL3",
 	.bits = 16,
+	.set_reg_profile = &set_reg_profile,
 	.desc = "Z80 CPU code analysis plugin",
+	.archinfo = archinfo,
 	.op = &z80_anal_op,
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_z80,
 	.version = R2_VERSION

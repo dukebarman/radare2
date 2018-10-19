@@ -130,8 +130,13 @@ static RList *ios_dbg_maps(RDebug *dbg) {
 		if (info.max_protection!=0 && !contiguous) {
 			char module_name[1024];
 			module_name[0] = 0;
+#ifndef __POWERPC__
 			int ret = proc_regionfilename (dbg->pid, address,
 				module_name, sizeof (module_name));
+#else
+#warning TODO: support proc_regionfilename on old OSX (ppc)
+			int ret = 0;
+#endif
 			module_name[ret] = 0;
 			#define xwr2rwx(x) ((x&1)<<2) | (x&2) | ((x&4)>>2)
 			// XXX: if its shared, it cannot be read?
@@ -148,7 +153,7 @@ static RList *ios_dbg_maps(RDebug *dbg) {
 				//""); //module_name);
 			mr = r_debug_map_new (buf, address, address+size,
 					xwr2rwx (info.protection), 0);
-			if (mr == NULL) {
+			if (!mr) {
 				eprintf ("Cannot create r_debug_map_new\n");
 				break;
 			}
@@ -253,7 +258,7 @@ static RList *osx_dbg_maps (RDebug *dbg) {
 			// :: prev_info.max_protection
 			mr = r_debug_map_new (buf, prev_address, prev_address+prev_size,
 				xwr2rwx (prev_info.protection), 0);
-			if (mr == NULL) {
+			if (!mr) {
 				eprintf ("Cannot create r_debug_map_new\n");
 				break;
 			}

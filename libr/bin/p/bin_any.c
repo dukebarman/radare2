@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2015 - pancake, nibble */
+/* radare - LGPL - Copyright 2009-2017 - pancake, nibble */
 
 #include <r_types.h>
 #include <r_util.h>
@@ -6,31 +6,43 @@
 #include <r_bin.h>
 #include <r_magic.h>
 
-static char *get_filetype (RBinFile *arch) {
-	ut8 buf[4096] = {0};
+static char *get_filetype(RBinFile *bf) {
+	ut8 buf[4096] = {
+		0
+	};
 	char *res = NULL;
-	RMagic * ck;
-	if (!arch) return NULL;
+	RMagic *ck;
+	if (!bf) {
+		return NULL;
+	}
 	ck = r_magic_new (0);
-	if (ck && arch && arch->buf) {
+	if (ck && bf && bf->buf) {
 		const char *tmp = NULL;
-		r_magic_load (ck, R_MAGIC_PATH);
-		r_buf_read_at (arch->buf, 0, buf, sizeof (buf));
+		// TODO: dir.magic not honored here
+		char *pfx = r_str_newf (R_JOIN_2_PATHS ("%s", R2_SDB_MAGIC), r_sys_prefix (NULL));
+		r_magic_load (ck, R2_SDB_MAGIC);
+		r_buf_read_at (bf->buf, 0, buf, sizeof (buf));
 		tmp = r_magic_buffer (ck, buf, sizeof (buf));
-		if (tmp) res = strdup (tmp);
+		if (tmp) {
+			res = strdup (tmp);
+		}
+		free (pfx);
 	}
 	r_magic_free (ck);
 	return res;
 }
 
-static RBinInfo* info(RBinFile *arch) {
+static RBinInfo *info(RBinFile *bf) {
 	RBinInfo *ret = R_NEW0 (RBinInfo);
-	if (!ret) return NULL;
+	if (!ret) {
+		return NULL;
+	}
 	ret->lang = "";
-	ret->file = arch->file? strdup (arch->file): NULL;
-	ret->type = get_filetype (arch);
+	ret->file = bf->file? strdup (bf->file): NULL;
+	ret->type = get_filetype (bf);
 	ret->has_pi = 0;
 	ret->has_canary = 0;
+	ret->has_retguard = -1;
 	if (R_SYS_BITS & R_SYS_BITS_64) {
 		ret->bits = 64;
 	} else {
@@ -45,19 +57,19 @@ static RBinInfo* info(RBinFile *arch) {
 	return ret;
 }
 
-static int load(RBinFile *arch) {
+static bool load(RBinFile *bf) {
 	return true;
 }
 
-static int destroy(RBinFile *arch) {
+static int destroy(RBinFile *bf) {
 	return true;
 }
 
-static ut64 baddr(RBinFile *arch) {
+static ut64 baddr(RBinFile *bf) {
 	return 0LL;
 }
 
-struct r_bin_plugin_t r_bin_plugin_any = {
+RBinPlugin r_bin_plugin_any = {
 	.name = "any",
 	.desc = "Dummy format r_bin plugin",
 	.license = "LGPL3",
@@ -69,7 +81,7 @@ struct r_bin_plugin_t r_bin_plugin_any = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_any,
 	.version = R2_VERSION

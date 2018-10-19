@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2016 - nibble, pancake */
+/* radare - LGPL - Copyright 2009-2017 - nibble, pancake */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,115 +6,140 @@
 
 #include <r_lib.h>
 #include <r_util.h>
-#include <r_flags.h>
 #include <r_anal.h>
 #include <r_parse.h>
 // 16 bit examples
 //    0x0001f3a4      9a67620eca       call word 0xca0e:0x6267
 //    0x0001f41c      eabe76de12       jmp word 0x12de:0x76be [2]
 //    0x0001f56a      ea7ed73cd3       jmp word 0xd33c:0xd77e [6]
-static int replace(int argc, const char *argv[], char *newstr) {
-	int i,j,k;
+static int replace (int argc, char *argv[], char *newstr) {
+#define MAXPSEUDOOPS 10
+	int i, j, k, d;
+	char ch;
 	struct {
 		char *op;
 		char *str;
+		int args[MAXPSEUDOOPS];  // XXX can't use flex arrays, all unused will be 0
 	} ops[] = {
-		{ "adc",  "1 += 2"},
-		{ "add",  "1 += 2"},
-		{ "and",  "1 &= 2"},
-		{ "call", "1 ()"},
-		{ "cmove", "1 = 2"},
-		{ "cmovl","ifnot zf,1 = 2"},
-		{ "cmp", "if (1 == 2"},
-		{ "cmpsq", "if (1 == 2"},
-		{ "cmsb", "if (1 == 2"},
-		{ "cmsw", "if (1 == 2"},
-		{ "dec",  "1--"},
-		{ "div",  "1 /= 2"},
-		{ "fabs",  "abs(1)"},
-		{ "fadd",  "1 = 1 + 2"},
-		{ "fcomp",  "if (1 == 2"},
-		{ "fcos",  "1 = cos(1)"},
-		{ "fdiv",  "1 = 1 / 2"},
-		{ "fiadd",  "1 = 1 / 2"},
-		{ "ficom",  "if (1 == 2"},
-		{ "fidiv",  "1 = 1 / 2"},
-		{ "fidiv",  "1 = 1 * 2"},
-		{ "fisub",  "1 = 1 - 2"},
-		{ "fnul",  "1 = 1 * 2"},
-		{ "fnop",  " "},
-		{ "frndint",  "1 = (int) 1"},
-		{ "fsin",  "1 = sin(1)"},
-		{ "fsqrt",  "1 = sqrt(1)"},
-		{ "fsub",  "1 = 1 - 2"},
-		{ "fxch",  "1,2 = 2,1"},
-		{ "idiv",  "1 /= 2"},
-		{ "imul",  "1 *= 2"},
-		{ "in",   "1 = io[2]"},
-		{ "inc",  "1++"},
-		{ "ja", "isAbove 1)"},
-		{ "jbe", "isBelowOrEqual 1)"},
-		{ "je", "isZero 1)"},
-		{ "jg", "isGreater 1)"},
-		{ "jge", "isGreaterOrEqual 1)"},
-		{ "jle", "isLessOrEqual 1)"},
-		{ "jmp",  "goto 1"},
-		{ "jne", "notZero 1)"},
-		{ "lea",  "1 = 2"},
-		{ "mov",  "1 = 2"},
-		{ "movsd",  "1 = 2"},
-		{ "movsx","1 = 2"},
-		{ "movsxd","1 = 2"},
-		{ "movzx", "1 = 2"},
-		{ "movntdq", "1 = 2"},
-		{ "movnti", "1 = 2"},
-		{ "movntpd", "1 = 2"},
-		{ "mul",  "1 *= 2"},
-		{ "neg",  "1 ~= 1"},
-		{ "nop",  ""},
-		{ "not",  "1 = !1"},
-		{ "or",   "1 |= 2"},
-		{ "out",  "io[1] = 2"},
-		{ "pop",  "pop 1"},
-		{ "push", "push 1"},
-		{ "sal",  "1 <<= 2"},
-		{ "sar",  "1 >>= 2"},
-		{ "sete",  "1 = e"},
-		{ "setne",  "1 = ne"},
-		{ "shl",  "1 <<<= 2"},
-		{ "shld",  "1 <<<= 2"},
-		{ "sbb",  "1 = 1 - 2"},
-		{ "shr",  "1 >>>= 2"},
-		{ "shlr",  "1 >>>= 2"},
-		//{ "strd",  "1 = 2 - 3"},
-		{ "sub",  "1 -= 2"},
-		{ "swap", "swap 1, 2"},
-		{ "test", "if (1 == 2"},
-		{ "xchg",  "1,2 = 2,1"},
-		{ "xadd",  "1,2 = 2,1+2"},
-		{ "xor",  "1 ^= 2"},
+		{ "adc",  "# += #", {1, 2}},
+		{ "add",  "# += #", {1, 2}},
+		{ "and",  "# &= #", {1, 2}},
+		{ "call", "# ()", {1}},
+		{ "cmove", "if (!var) # = #", {1, 2}},
+		{ "cmovl","if (var < 0) # = #", {1, 2}},
+		{ "cmp", "var = # - #", {1, 2}},
+		{ "cmpsq", "var = # - #", {1, 2}},
+		{ "cmpsb", "while (CX != 0) { var = *(DS*16 + SI) - *(ES*16 + DI); SI++; DI++; CX--; if (!var) break; }", {0}},
+		{ "cmpsw", "while (CX != 0) { var = *(DS*16 + SI) - *(ES*16 + DI); SI+=4; DI+=4; CX--; if (!var) break; }", {0}},
+		{ "dec",  "#--", {1}},
+		{ "div",  "# /= #", {1, 2}},
+		{ "fabs",  "abs(#)", {1}},
+		{ "fadd",  "# = # + #", {1, 1, 2}},
+		{ "fcomp",  "var = # - #", {1, 2}},
+		{ "fcos",  "# = cos(#)", {1, 1}},
+		{ "fdiv",  "# = # / #", {1, 1, 2}},
+		{ "fiadd",  "# = # / #", {1, 1, 2}},
+		{ "ficom",  "var = # - #", {1, 2}},
+		{ "fidiv",  "# = # / #", {1, 1, 2}},
+		{ "fidiv",  "# = # * #", {1, 1, 2}},
+		{ "fisub",  "# = # - #", {1, 1, 2}},
+		{ "fnul",  "# = # * #", {1, 1, 2}},
+		{ "fnop",  " ", {0}},
+		{ "frndint",  "# = (int) #", {1, 1}},
+		{ "fsin",  "# = sin(#)", {1, 1}},
+		{ "fsqrt",  "# = sqrt(#)", {1, 1}},
+		{ "fsub",  "# = # - #", {1, 1, 2}},
+		{ "fxch",  "#,# = #,#", {1, 2, 2, 1}},
+		{ "idiv",  "# /= #", {1, 2}},
+		{ "imul",  "# = # * #", {1, 2, 3}},
+		{ "in",   "# = io[#]", {1, 2}},
+		{ "inc",  "#++", {1}},
+		{ "ja", "if (((unsigned) var) > 0) goto #", {1}},
+		{ "jb", "if (((unsigned) var) < 0) goto #", {1}},
+		{ "jbe", "if (((unsigned) var) <= 0) goto #", {1}},
+		{ "je", "if (!var) goto #", {1}},
+		{ "jg", "if (var > 0) goto #", {1}},
+		{ "jge", "if (var >= 0) goto #", {1}},
+		{ "jle", "if (var <= 0) goto #", {1}},
+		{ "jmp",  "goto #", {1}},
+		{ "jne", "if (var) goto #", {1}},
+		{ "lea",  "# = #", {1, 2}},
+		{ "mov",  "# = #", {1, 2}},
+		{ "movsd",  "# = #", {1, 2}},
+		{ "movsx","# = #", {1, 2}},
+		{ "movsxd","# = #", {1, 2}},
+		{ "movzx", "# = #", {1, 2}},
+		{ "movntdq", "# = #", {1, 2}},
+		{ "movnti", "# = #", {1, 2}},
+		{ "movntpd", "# = #", {1, 2}},
+		{ "movdqu", "# = #", {1, 2}},
+		{ "movdqa", "# = #", {1, 2}},
+		{ "pextrb", "# = (byte) # [#]", {1, 2, 3}},
+		{ "palignr", "# = # align #", {1, 2, 3}},
+		{ "pxor", "# ^= #", {1, 2}},
+		{ "mul",  "# = # * #", {1, 2, 3}},
+		{ "neg",  "# ~= #", {1, 1}},
+		{ "nop",  "", {0}},
+		{ "not",  "# = !#", {1, 1}},
+		{ "or",   "# |= #", {1, 2}},
+		{ "out",  "io[#] = #", {1, 2}},
+		{ "pop",  "pop #", {1}},
+		{ "push", "push #", {1}},
+		{ "ret",  "return", {0}},
+		{ "sal",  "# <<= #", {1, 2}},
+		{ "sar",  "# >>= #", {1, 2}},
+		{ "sete",  "# = e", {1}},
+		{ "setne",  "# = ne", {1}},
+		{ "shl",  "# <<<= #", {1, 2}},
+		{ "shld",  "# <<<= #", {1, 2}},
+		{ "sbb",  "# = # - #", {1, 1, 2}},
+		{ "shr",  "# >>>= #", {1, 2}},
+		{ "shlr",  "# >>>= #", {1, 2}},
+		//{ "strd",  "# = # - #", {1, 2, 3}},
+		{ "sub",  "# -= #", {1, 2}},
+		{ "swap", "var = #; # = #; # = var", {1, 1, 2, 2}},
+		{ "test", "var = # & #", {1, 2}},
+		{ "xchg",  "#,# = #,#", {1, 2, 2, 1}},
+		{ "xadd",  "#,# = #,#+#", {1, 2, 2, 1, 2}},
+		{ "xor",  "# ^= #", {1, 2}},
 		{ NULL }
 	};
 
-	if (argc>2 && !strcmp (argv[0], "xor")) {
+	if (argc > 2 && !strcmp (argv[0], "xor")) {
 		if (!strcmp (argv[1], argv[2])) {
 			argv[0] = "mov";
 			argv[2] = "0";
 		}
 	}
-	for (i=0; ops[i].op != NULL; i++) {
+	for (i = 0; ops[i].op != NULL; i++) {
 		if (!strcmp (ops[i].op, argv[0])) {
 			if (newstr != NULL) {
-				for (j=k=0; ops[i].str[j]!='\0'; j++, k++) {
-					if (ops[i].str[j]>='0' && ops[i].str[j]<='9') {
-						const char *w = argv[ ops[i].str[j]-'0' ];
-						if (w != NULL) {
-							strcpy (newstr+k, w);
-							k += strlen(w)-1;
+				d = 0;
+				j = 0;
+				ch = ops[i].str[j];
+				for (j = 0, k = 0; ch != '\0'; j++, k++) {
+					ch = ops[i].str[j];
+					if (ch == '#') {
+						if (d >= MAXPSEUDOOPS) {
+							// XXX Shouldn't ever happen...
+							continue;
 						}
-					} else newstr[k] = ops[i].str[j];
+						int idx = ops[i].args[d];
+						d++;
+						if (idx <= 0) {
+							// XXX Shouldn't ever happen...
+							continue;
+						}
+						const char *w = argv[idx];
+						if (w != NULL) {
+							strcpy (newstr + k, w);
+							k += strlen (w) - 1;
+						}
+					} else {
+						newstr[k] = ch;
+					}
 				}
-				newstr[k]='\0';
+				newstr[k] = '\0';
 			}
 			return true;
 		}
@@ -129,57 +154,125 @@ static int replace(int argc, const char *argv[], char *newstr) {
 		}
 	}
 	return false;
+#undef MAXPSEUDOOPS
 }
 
-static int parse(RParse *p, const char *data, char *str) {
+static int parse (RParse *p, const char *data, char *str) {
 	char w0[256], w1[256], w2[256], w3[256];
-	int i, len = strlen (data);
-	char *buf, *ptr, *optr;
-
-	if (len>=sizeof (w0))
+	int i;
+	size_t len = strlen (data);
+	int sz = 32;
+	char *buf, *ptr, *optr, *end;
+	if (len >= sizeof (w0) || sz >= sizeof (w0)) {
 		return false;
-	// malloc can be slow here :?
-	if ((buf = malloc (len+1)) == NULL)
+	}
+	// strdup can be slow here :?
+	if (!(buf = strdup (data))) {
 		return false;
-	memcpy (buf, data, len+1);
-
+	}
 	if (*buf) {
 		*w0 = *w1 = *w2 = *w3 = '\0';
+		end = strchr (buf, '\0');
 		ptr = strchr (buf, ' ');
-		if (ptr == NULL)
+		if (!ptr) {
 			ptr = strchr (buf, '\t');
+		}
+		if (!ptr) {
+			ptr = end;
+		}
+		*ptr = '\0';
+		if (ptr != end) {
+			for (++ptr; *ptr == ' '; ptr++) {
+				;
+			}
+		}
+		r_str_ncpy (w0, buf, sizeof (w0));
+		r_str_ncpy (w1, ptr, sizeof (w1));
+		optr = ptr;
+		ptr = strchr (ptr, ',');
 		if (ptr) {
 			*ptr = '\0';
-			for (++ptr; *ptr==' '; ptr++);
-			strncpy (w0, buf, sizeof (w0) - 1);
-			strncpy (w1, ptr, sizeof (w1) - 1);
-
+			for (++ptr; *ptr == ' '; ptr++) {
+				;
+			}
+			r_str_ncpy (w1, optr, sizeof (w1));
+			r_str_ncpy (w2, ptr, sizeof (w2));
 			optr = ptr;
 			ptr = strchr (ptr, ',');
 			if (ptr) {
 				*ptr = '\0';
-				for (++ptr; *ptr==' '; ptr++);
-				strncpy (w1, optr, sizeof (w1) - 1);
-				strncpy (w2, ptr, sizeof (w2) - 1);
-				optr = ptr;
-				ptr = strchr (ptr, ',');
-				if (ptr) {
-					*ptr = '\0';
-					for (++ptr; *ptr==' '; ptr++);
-					strncpy (w2, optr, sizeof (w2) - 1);
-					strncpy (w3, ptr, sizeof (w3) - 1);
+				for (++ptr; *ptr == ' '; ptr++) {
+					;
+				}
+				r_str_ncpy (w2, optr, sizeof (w2));
+				r_str_ncpy (w3, ptr, sizeof (w3));
+			}
+		}
+	}
+	char *wa[] = { w0, w1, w2, w3 };
+	int nw = 0;
+	for (i = 0; i < 4; i++) {
+		if (wa[i][0] != '\0') {
+			nw++;
+		}
+	}
+	/* TODO: interpretation of memory location fails*/
+	//ensure imul & mul interpretations works
+	if (strstr (w0, "mul")) {
+		if (nw == 2)
+		{
+			r_str_ncpy (wa[3], wa[1], sizeof (w3));
+
+			switch (wa[3][0]) {
+			case 'q':
+			case 'r': //qword, r..
+				r_str_ncpy (wa[1], "rax", sizeof (w1));
+				r_str_ncpy (wa[2], "rax", sizeof (w2));
+				break;
+			case 'd':
+			case 'e': //dword, e..
+				if (strlen (wa[3]) > 2) {
+					r_str_ncpy (wa[1], "eax", sizeof (w1));
+					r_str_ncpy (wa[2], "eax", sizeof (w2));
+					break;
+				}
+			default : // .x, .p, .i or word
+				if (wa[3][1] == 'x' || wa[3][1] == 'p' || \
+					wa[3][1] == 'i' || wa[3][0] == 'w') {
+					r_str_ncpy (wa[1], "ax", sizeof (w1));
+					r_str_ncpy (wa[2], "ax", sizeof (w2));
+				} else { // byte and lowest 8 bit registers
+					r_str_ncpy (wa[1], "al", sizeof (w1));
+					r_str_ncpy (wa[2], "al", sizeof (w2));
 				}
 			}
 		}
+		else if (nw == 3)
 		{
-			const char *wa[] = { w0, w1, w2, w3 };
-			int nw = 0;
-			for (i=0; i<4; i++) {
-				if (wa[i][0] != '\0')
-				nw++;
-			}
-			replace (nw, wa, str);
+			r_str_ncpy (wa[3], wa[2], sizeof (w3));
+			r_str_ncpy (wa[2], wa[1], sizeof (w2));
 		}
+
+		replace (nw, wa, str);
+
+	} else if ((strstr (w1, "ax") || strstr (w1, "ah") || strstr (w1, "al")) && !p->retleave_asm) {
+		if (!(p->retleave_asm = (char *) malloc (sz))) {
+			return false;
+		}
+		r_snprintf (p->retleave_asm, sz, "return %s", w2);
+		replace (nw, wa, str);
+	} else if ((strstr (w0, "leave") && p->retleave_asm) || (strstr (w0, "pop") && strstr (w1, "bp"))) {
+		r_str_ncpy (wa[0], " \0", 2);
+		r_str_ncpy (wa[1], " \0", 2);
+		replace (nw, wa, str);
+	} else if (strstr (w0, "ret") && p->retleave_asm) {
+		r_str_ncpy (str, p->retleave_asm, sz);
+		R_FREE (p->retleave_asm);
+	} else if (p->retleave_asm) {
+		R_FREE (p->retleave_asm);
+		replace (nw, wa, str);
+	} else {
+		replace (nw, wa, str);
 	}
 	free (buf);
 	return true;
@@ -207,47 +300,96 @@ static inline int issegoff (const char *w) {
 }
 #endif
 
-static bool varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data, char *str, int len) {
-#if USE_VARSUBS
-	int i;
-	char *ptr, *ptr2;
-	for (i = 0; i < R_ANAL_VARSUBS; i++)
-		if (f->varsubs[i].pat[0] != '\0' && \
-			f->varsubs[i].sub[0] != '\0' && \
-			(ptr = strstr (data, f->varsubs[i].pat))) {
-				*ptr = '\0';
-				ptr2 = ptr + strlen (f->varsubs[i].pat);
-				snprintf (str, len, "%s%s%s", data,
-					f->varsubs[i].sub, ptr2);
+static void parse_localvar (RParse *p, char *newstr, size_t newstr_len, const char *var, const char *reg, char sign, bool att) {
+	if (att) {
+		if (p->localvar_only) {
+			snprintf (newstr, newstr_len - 1, "%s", var);
+		} else {
+			snprintf (newstr, newstr_len - 1, "%s(%%%s)", var, reg);
 		}
-	return true;
-#else
-	RAnalVar *var, *arg, *sparg;
-	RListIter *variter, *argiter, *spiter;
+	} else {
+		if (p->localvar_only) {
+			snprintf (newstr, newstr_len - 1, "[%s]", var);
+		} else {
+			snprintf (newstr, newstr_len - 1, "[%s %c %s]", reg, sign, var);
+		}
+	}
+}
+
+static inline void mk_reg_str(const char *regname, int delta, bool sign, bool att, char *dest, int len) {
+	if (att) {
+		if (delta < 10) {
+			snprintf (dest, len - 1, "%s%d(%%%s)", sign ? "" : "-", delta, regname);
+		} else {
+			snprintf (dest, len - 1, "%s0x%x(%%%s)", sign ? "" : "-", delta, regname);
+		}
+	} else {
+		if (delta < 10) {
+			snprintf (dest, len - 1, "[%s %c %d]", regname, sign ? '+':'-', delta);
+		} else {
+			snprintf (dest, len - 1, "[%s %c 0x%x]", regname, sign ? '+':'-', delta);
+		}
+	}
+}
+
+static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data, char *str, int len) {
+	RList *bpargs, *spargs;
+	RAnalVar *bparg, *sparg;
+	RListIter *bpargiter, *spiter;
 	char oldstr[64], newstr[64];
 	char *tstr = strdup (data);
-	RList *vars, *args, *spargs;
+	if (!tstr) {
+		return false;
+	}
+
+	bool att = strchr (data, '%');
 
 	if (p->relsub) {
-		char *rip = strstr (tstr, "[rip");
-		if (rip) {
-			char *ripend = strchr (rip + 3, ']');
-			const char *plus = strchr (rip, '+');
-			const char *neg = strchr (rip, '-');
-			char *tstr_new;
-			ut64 repl_num = oplen + addr;
+		if (att) {
+			char *rip = (char *) r_str_casestr (tstr, "(%rip)");
+			if (rip) {
+				*rip = 0;
+				char *pre = tstr;
+				char *pos = rip + 6;
+				char *word = rip;
+				while (word > tstr && *word != ' ') {
+					word--;
+				}
 
-			if (!ripend) ripend = "]";
-			if (plus) repl_num += r_num_get (NULL, plus + 1);
-			if (neg) repl_num -= r_num_get (NULL, neg + 1);
+				if (word > tstr) {
+					*word++ = 0;
+					*rip = 0;
+					st64 n = r_num_math (NULL, word);
+					ut64 repl_num = oplen + addr + n;
+					char *tstr_new = r_str_newf ("%s 0x%08"PFMT64x"%s", pre, repl_num, pos);
+					*rip = '(';
+					free (tstr);
+					tstr = tstr_new;
+				}
+			}
+		} else {
+			char *rip = (char *) r_str_casestr (tstr, "[rip");
+			if (rip) {
+				char *ripend = strchr (rip + 3, ']');
+				const char *plus = strchr (rip, '+');
+				const char *neg = strchr (rip, '-');
+				char *tstr_new;
+				ut64 repl_num = oplen + addr;
 
-			rip[1] = '\0';
-			tstr_new = r_str_newf ("%s0x%08"PFMT64x"%s", tstr, repl_num, ripend);
-			free (tstr);
-			tstr = tstr_new;
-			if (!strncmp (tstr, "lea", 3)) {
-				r_str_replace_char (tstr, '[', 0);
-				r_str_replace_char (tstr, ']', 0);
+				if (!ripend) {
+					ripend = "]";
+				}
+				if (plus) {
+					repl_num += r_num_get (NULL, plus + 1);
+				}
+				if (neg) {
+					repl_num -= r_num_get (NULL, neg + 1);
+				}
+
+				rip[1] = '\0';
+				tstr_new = r_str_newf ("%s0x%08"PFMT64x"%s", tstr, repl_num, ripend);
+				free (tstr);
+				tstr = tstr_new;
 			}
 		}
 	}
@@ -256,64 +398,80 @@ static bool varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data
                 free (tstr);
 		return false;
         }
-	vars = p->varlist (p->anal, f, 'v');
-	args = p->varlist (p->anal, f, 'a');
-	spargs = p->varlist (p->anal, f, 'e');
-	/* if no stack args check for fastcall ones */
-	/* XXX: this is just a hack because not all compilers store fastcall args in stack */
-	if (r_list_empty (args)) {
-		args = p->varlist (p->anal, f, 'A');
-	}
+	bpargs = p->varlist (p->anal, f, 'b');
+	spargs = p->varlist (p->anal, f, 's');
 	/*iterate over stack pointer arguments/variables*/
-	r_list_foreach (spargs, spiter,sparg) {
-		if (sparg->delta < 10) {
-			snprintf (oldstr, sizeof (oldstr)-1, "[%s + %d]",
-				p->anal->reg->name[R_REG_NAME_SP], sparg->delta);
-		} else {
-			snprintf (oldstr, sizeof (oldstr)-1, "[%s + 0x%x]",
-				p->anal->reg->name[R_REG_NAME_SP], sparg->delta);
+	bool ucase = *tstr >= 'A' && *tstr <= 'Z';
+	if (ucase && tstr[1]) {
+		ucase = tstr[1] >= 'A' && tstr[1] <= 'Z';
+	}
+	r_list_foreach (spargs, spiter, sparg) {
+		// assuming delta always positive?
+		mk_reg_str (p->anal->reg->name[R_REG_NAME_SP], sparg->delta, true, att, oldstr, sizeof (oldstr));
+
+		if (ucase) {
+			r_str_case (oldstr, true);
 		}
-		snprintf (newstr, sizeof (newstr)-1, "[%s + %s]",
-			p->anal->reg->name[R_REG_NAME_SP],
-			sparg->name);
-		if (strstr (tstr, oldstr)) {
+		parse_localvar (p, newstr, sizeof (newstr), sparg->name, p->anal->reg->name[R_REG_NAME_SP], '+', att);
+		if (ucase) {
+			char *plus = strchr (newstr, '+');
+			if (plus) {
+				*plus = 0;
+				r_str_case (newstr, true);
+				*plus = '+';
+			} else {
+				r_str_case (newstr, true);
+			}
+		}
+		char *ptr = strstr(tstr, oldstr);
+		if (ptr && (!att || *(ptr - 1) == ' ')) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
 			break;
 		} else {
 			r_str_case (oldstr, false);
-			if (strstr (tstr, oldstr)) {
+			ptr = strstr(tstr, oldstr);
+			if (ptr && (!att || *(ptr - 1) == ' ')) {
 				tstr = r_str_replace (tstr, oldstr, newstr, 1);
 				break;
 			}
 		}
 	}
-	/* iterate over arguments */
-	r_list_foreach (args, argiter, arg) {
-		if (arg->delta < 10) snprintf (oldstr, sizeof (oldstr)-1,
-			"[%s + %d]",
-			p->anal->reg->name[R_REG_NAME_BP],
-			arg->delta);
-		else snprintf (oldstr, sizeof (oldstr)-1,
-			"[%s + 0x%x]",
-			p->anal->reg->name[R_REG_NAME_BP],
-			arg->delta);
-		snprintf (newstr, sizeof (newstr)-1, "[%s + %s]",
-			p->anal->reg->name[R_REG_NAME_BP],
-			arg->name);
-		if (strstr (tstr, oldstr) != NULL) {
+	/* iterate over base pointer args/vars */
+	r_list_foreach (bpargs, bpargiter, bparg) {
+		char sign = '+';
+		if (bparg->delta < 0) {
+			sign = '-';
+			bparg->delta = -bparg->delta;
+		}
+		mk_reg_str (p->anal->reg->name[R_REG_NAME_BP], bparg->delta, sign=='+', att, oldstr, sizeof (oldstr));
+		if (ucase) {
+			r_str_case (oldstr, true);
+		}
+		parse_localvar (p, newstr, sizeof (newstr), bparg->name, p->anal->reg->name[R_REG_NAME_BP], sign, att);
+		if (ucase) {
+			char *plus = strchr (newstr, sign);
+			if (plus) {
+				*plus = 0;
+				r_str_case (newstr, true);
+				*plus = sign;
+			} else {
+				r_str_case (newstr, true);
+			}
+		}
+		char *ptr = strstr (tstr, oldstr);
+		if (ptr && (!att || *(ptr - 1) == ' ')) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
 			break;
 		} else {
 			r_str_case (oldstr, false);
-			if (strstr (tstr, oldstr) != NULL) {
+			ptr = strstr(tstr, oldstr);
+			if (ptr && (!att || *(ptr - 1) == ' ')) {
 				tstr = r_str_replace (tstr, oldstr, newstr, 1);
 				break;
 			}
 		}
 		// Try with no spaces
-		snprintf (oldstr, sizeof (oldstr)-1, "[%s+0x%x]",
-			p->anal->reg->name[R_REG_NAME_BP],
-			arg->delta);
+		snprintf (oldstr, sizeof (oldstr)-1, "[%s%c0x%x]", p->anal->reg->name[R_REG_NAME_BP], sign, bparg->delta);
 		if (strstr (tstr, oldstr) != NULL) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
 			break;
@@ -322,37 +480,13 @@ static bool varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data
 
 	char bp[32];
 	if (p->anal->reg->name[R_REG_NAME_BP]) {
-		strncpy (bp, p->anal->reg->name[R_REG_NAME_BP], sizeof (bp) -1);
+		strncpy (bp, p->anal->reg->name[R_REG_NAME_BP], sizeof (bp) - 1);
 		if (isupper (*str)) {
 			r_str_case (bp, true);
 		}
-		bp[sizeof(bp) - 1] = 0;
+		bp[sizeof (bp) - 1] = 0;
 	} else {
 		bp[0] = 0;
-	}
-
-	r_list_foreach (vars, variter, var) {
-		if (var->delta < 10) snprintf (oldstr, sizeof (oldstr)-1, "[%s - %d]", bp, var->delta);
-		else snprintf (oldstr, sizeof (oldstr)-1, "[%s - 0x%x]", bp, var->delta);
-		snprintf (newstr, sizeof (newstr)-1, "[%s - %s]", bp, var->name);
-		if (strstr (tstr, oldstr) != NULL) {
-			tstr = r_str_replace (tstr, oldstr, newstr, 1);
-			break;
-		} else {
-			r_str_case (oldstr, true);
-			if (strstr (tstr, oldstr) != NULL) {
-				tstr = r_str_replace (tstr, oldstr, newstr, 1);
-				break;
-			}
-		}
-		// Try with no spaces
-		snprintf (oldstr, sizeof (oldstr)-1, "[%s - 0x%x]",
-			p->anal->reg->name[R_REG_NAME_BP],
-			var->delta);
-		if (strstr (tstr, oldstr) != NULL) {
-			tstr = r_str_replace (tstr, oldstr, newstr, 1);
-			break;
-		}
 	}
 
 	bool ret = true;
@@ -364,10 +498,9 @@ static bool varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data
 		ret = false;
 	}
 	free (tstr);
-	r_list_free (vars);
-	r_list_free (args);
+	r_list_free (spargs);
+	r_list_free (bpargs);
 	return ret;
-#endif
 }
 
 RParsePlugin r_parse_plugin_x86_pseudo = {
@@ -378,7 +511,7 @@ RParsePlugin r_parse_plugin_x86_pseudo = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_PARSE,
 	.data = &r_parse_plugin_x86_pseudo,
 	.version = R2_VERSION

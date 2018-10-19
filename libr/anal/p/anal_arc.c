@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2012-2013 - pancake */
+/* radare - LGPL - Copyright 2012-2016 - pancake */
 
 #include <string.h>
 #include <r_types.h>
@@ -41,7 +41,7 @@ static void arccompact_dump_fields(ut64 addr, ut32 words[2], arc_fields *f) {
 /* For (arguably valid) reasons, the ARCompact CPU uses "middle endian"
 	encoding on Little-Endian systems
  */
-static inline ut32 r_read_me32(const void *src) {
+static inline ut32 r_read_me32_arc(const void *src) {
 	const ut8 *s = src;
 	return (((ut32)s[1]) << 24) | (((ut32)s[0]) << 16) | (((ut32)s[3]) << 8) | (((ut32)s[2]) << 0);
 }
@@ -201,7 +201,7 @@ static int arcompact_genops_jmp(RAnalOp *op, ut64 addr, arc_fields *f, ut64 basi
 }
 
 static int arcompact_genops(RAnalOp *op, ut64 addr, ut32 words[2]) {
-	arc_fields fields;
+	arc_fields fields = {0};
 
 	fields.format = (words[0] & 0x00c00000) >> 22;
 	fields.subopcode = (words[0] & 0x003f0000) >> 16;
@@ -384,7 +384,8 @@ static int arcompact_genops(RAnalOp *op, ut64 addr, ut32 words[2]) {
 		case 6: /* Sign extend word */
 		case 7: /* Zero extend byte */
 		case 8: /* Zero extend word */
-			op->type = R_ANAL_OP_TYPE_UNK;
+			// op->type = R_ANAL_OP_TYPE_UNK;
+			op->type = R_ANAL_OP_TYPE_MOV;
 			/* TODO: a better encoding for SEX and EXT instructions */
 			break;
 		case 9: /* Absolute */
@@ -457,6 +458,10 @@ static int arcompact_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, in
 		op->type = R_ANAL_OP_TYPE_ILL;
 		return 0;
 	}
+	if (len < 8) {
+		//when r_read_me32_arc/be32 oob read
+		return 0;
+	}
 
 	op->type = R_ANAL_OP_TYPE_UNK;
 	op->ptr = UT64_MAX;
@@ -470,14 +475,15 @@ static int arcompact_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, in
 		words[0] = r_read_be32 (&data[0]);
 		words[1] = r_read_be32 (&data[4]);
 	} else {
-		words[0] = r_read_me32 (&data[0]);
-		words[1] = r_read_me32 (&data[4]);
+		words[0] = r_read_me32_arc (&data[0]);
+		words[1] = r_read_me32_arc (&data[4]);
 	}
 
 	fields.opcode = (words[0] & 0xf8000000) >> 27;
 
 	op->size = (fields.opcode >= 0x0c)? 2: 4;
 	op->nopcode = op->size;
+// eprintf ("%x\n", fields.opcode);
 
 	switch (fields.opcode) {
 	case 0:
@@ -605,11 +611,12 @@ static int arcompact_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, in
 		/* TODO: set op with GP,FP,SP src/dst details */
 		break;
 	case 4: /* General Operations */
+		op->type = R_ANAL_OP_TYPE_MOV;
 		return arcompact_genops (op, addr, words);
-	case 0x05:
-	case 0x06:
-	case 0x07:
-	case 0x08: /* 32-bit Extension Instructions, 0x05 - 0x08 */
+	case 5:
+	case 6:
+	case 7:
+	case 8: /* 32-bit Extension Instructions, 0x05 - 0x08 */
 		fields.subopcode = (words[0] & 0x003f0000) >> 16;
 		fields.format = (words[0] & 0x00c00000) >> 22;
 		fields.c = (words[0] & 0x00000fc0) >> 6;
@@ -629,9 +636,10 @@ static int arcompact_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, in
 			op->size = 8;
 			fields.limm = words[1];
 		}
-
 		/* TODO: fill in the extansion functions */
-		op->type = R_ANAL_OP_TYPE_UNK;
+		// op->type = R_ANAL_OP_TYPE_UNK;
+		// op->type = R_ANAL_OP_TYPE_SHL;
+		op->type = R_ANAL_OP_TYPE_SHR;
 		break;
 	case 0x09:
 	case 0x0a:
@@ -639,6 +647,7 @@ static int arcompact_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, in
 		op->type = R_ANAL_OP_TYPE_UNK;
 		break;
 	case 0x0c: /* Load /Add Register-Register, 0x0C, [0x00 - 0x03] */
+		op->type = R_ANAL_OP_TYPE_LOAD;
 		fields.subopcode = (words[0] & 0x00180000) >> 19;
 		/* fields.a	= (words[0] & 0x00070000) >> 16; */
 		/* fields.c	= (words[0] & 0x00e00000) >> 21; */
@@ -1008,8 +1017,9 @@ static int arc_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int len)
 	const ut8 *b = (ut8 *)data;
 	memset (op, '\0', sizeof (RAnalOp));
 
-	if (anal->bits == 16)
+	if (anal->bits == 16) {
 		return arcompact_op (anal, op, addr, data, len);
+	}
 
 	/* ARCtangent A4 */
 	op->size = 4;
@@ -1060,7 +1070,6 @@ static int archinfo(RAnal *anal, int query) {
 	if (anal->bits != 16) {
 		return -1;
 	}
-
 	switch (query) {
 	case R_ANAL_ARCHINFO_ALIGN:
 		return 2;
@@ -1129,7 +1138,7 @@ static int set_reg_profile(RAnal *anal) {
 	return r_reg_set_profile_string (anal->reg, p16);
 }
 
-struct r_anal_plugin_t r_anal_plugin_arc = {
+RAnalPlugin r_anal_plugin_arc = {
 	.name = "arc",
 	.arch = "arc",
 	.license = "LGPL3",
@@ -1141,7 +1150,7 @@ struct r_anal_plugin_t r_anal_plugin_arc = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_arc,
 	.version = R2_VERSION,

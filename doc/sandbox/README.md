@@ -19,8 +19,19 @@ the rules are described in a lispy .sb file:
 **NOTE**: r2 -S is an alias for -e cfg.sandbox=true
 
 
-OpenBSD
--------
+OpenBSD (from 5.9)
+------------------
+
+OpenBSD comes with support for sandboxing using the pledge(2) syscall.
+
+Only the following are allowed:
+
+- stdio and tty manipulation
+- filesystem reading
+- mmap(2) `PROT_EXEC` manipulation
+
+OpenBSD (until 5.9)
+-------------------
 
 OpenBSD comes with support for sandboxing using the systrace utility.
 
@@ -33,6 +44,14 @@ Generate default profile
 Run with the generated profile
 
 	$ systrace -a r2 -S /bin/ls
+
+FreeBSD (from 10.0)
+-------------------
+
+FreeBSD comes with the Capsicum framework support,
+ using cap_enter(2).
+
+Operations limited on what basic capability mode support.
 
 Other
 -----

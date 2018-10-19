@@ -1,12 +1,18 @@
-/* radare - LGPL - Copyright 2013 - pancake */
+/* radare - LGPL - Copyright 2013-2017 - pancake */
 // -- work in progress -- //
 
-#include "r_util.h"
 #include "r_slist.h"
 
 R_API RSList *r_slist_new() {
 	RSList *s = R_NEW0 (RSList);
+	if (!s) {
+		return NULL;
+	}
 	s->list = r_list_new ();
+	if (!s->list) {
+		r_slist_free (s);
+		return NULL;
+	}
 	return s;
 }
 
@@ -18,10 +24,12 @@ R_API void r_slist_free(RSList *s) {
 }
 
 R_API int r_slist_get_slot(RSList *s, ut64 addr) {
-	if (s->min == 0 && s->min == s->max)
+	if (s->min == 0 && s->min == s->max) {
 		return -1;
-	if (addr < s->min || addr > s->max)
+	}
+	if (addr < s->min || addr > s->max) {
 		return -1;
+	}
 	return (addr - s->min) / s->mod;
 }
 
@@ -34,6 +42,9 @@ R_API RSList *r_slist_add(RSList *s, void *data, ut64 from, ut64 to) {
 	ut64 at = from;
 	int slot, lastslot;
 	RSListItem *item = get_new_item ();
+	if (!item) {
+		return NULL;
+	}
 	//RSListItem **items;
 	// append to list
 	item->from = from;
@@ -68,10 +79,12 @@ R_API RSList *r_slist_add(RSList *s, void *data, ut64 from, ut64 to) {
 R_API RSListItem **r_slist_get(RSList *s, ut64 addr) {
 	int idx;
 	ut64 base;
-	if (s->min == 0 && s->min == s->max)
+	if (s->min == 0 && s->min == s->max) {
 		return NULL;
-	if (addr < s->min || addr > s->max)
+	}
+	if (addr < s->min || addr > s->max) {
 		return NULL;
+	}
 	base = addr - s->min;
 	idx = base / s->mod;
 	return s->items[idx];
@@ -105,10 +118,12 @@ R_API void r_slist_optimize(RSList *s) {
 			max = ptr->to;
 			begin = 0;
 		} else {
-			if (ptr->from < min)
+			if (ptr->from < min) {
 				min = ptr->from;
-			if (ptr->to > max)
+			}
+			if (ptr->to > max) {
 				max = ptr->to;
+			}
 		}
 	}
 
@@ -125,7 +140,7 @@ R_API void r_slist_optimize(RSList *s) {
 //eprintf ("MOD %d (block size)\n", s->mod);
 // store integers as indexes inside the allocated heap
 
-#if 0
+/*
 	RArray *items = r_array_new (10, sizeof (RSListItem));
 	RSListItem *idx = r_array_add (items);
 		idx->from = from;
@@ -150,14 +165,14 @@ INPUT
 	min offset
 	max offset
 OUTPUT
-#endif
+*/
 	// find better distribution
 	r_list_foreach (s->list, iter, ptr) {
 		//...
 	}
 }
 
-#if 0
+/*
 typedef struct {
 
 } SListStore;
@@ -179,4 +194,4 @@ typedef struct {
 --- StoreList # Heap Array of integers pointing to storage
               | we can probably just store a list of removed
               | items and the length
-#endif
+*/

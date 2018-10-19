@@ -1,23 +1,35 @@
 #!/bin/sh
 
 BUILD=1
-PREFIX="/data/data/org.radare2.installer/radare2"
+FLAGS=""
+PREFIX="/data/data/org.radare.radare2installer/radare2"
 
 type pax
 [ $? != 0 ] && exit 1
 
 cd `dirname $PWD/$0` ; cd ..
 
+# we need a more recent ndk to build the mergedlib for mips
+
+[ -z "${NDK_ARCH}" ] && NDK_ARCH=arm
+
+# ow yeah
+STATIC_BUILD=1
+
 case "$1" in
 "mips")
 	NDK_ARCH=mips
 	STATIC_BUILD=0
 	STRIP=mips-linux-android-strip
+#	FLAGS="-mlong-calls"
+#	export LDFLAGS="-fuse-ld=gold"
 	;;
 "mips64")
 	NDK_ARCH=mips64
 	STATIC_BUILD=0
 	STRIP=mips64el-linux-android-strip
+#	FLAGS="-mlong-calls"
+#	export LDFLAGS="-fuse-ld=gold"
 	;;
 "arm")
 	NDK_ARCH=arm
@@ -73,11 +85,7 @@ local)
 	;;
 esac
 
-[ -z "${NDK_ARCH}" ] && NDK_ARCH=arm
 [ -z "${STATIC_BUILD}" ] && STATIC_BUILD=0
-
-# ow yeah
-STATIC_BUILD=1
 export NDK_ARCH
 export STATIC_BUILD
 PKG=`./configure --version|head -n1 |cut -d ' ' -f 1`
@@ -87,12 +95,11 @@ echo NDK_ARCH: ${NDK_ARCH}
 echo "Using NDK_ARCH: ${NDK_ARCH}"
 echo "Using STATIC_BUILD: ${STATIC_BUILD}"
 
-export CFLAGS="-fPIC -fPIE"
+export CFLAGS="-fPIC -fPIE ${FLAGS}"
 
 if [ "${BUILD}" = 1 ]; then
 	if [ -z "${NDK}" ]; then
-		echo "Missing NDK env var. Use ./android-{arm|aarch64|mips|mips64|x86}.sh"
-		exit 1
+		exec sys/android-shell.sh ${NDK_ARCH} $0 $@
 	fi
 	export ANDROID=1
 	# start build
@@ -101,11 +108,11 @@ if [ "${BUILD}" = 1 ]; then
 	if [ 1 = 1 ]; then
 		make mrproper
 		if [ $STATIC_BUILD = 1 ]; then
-			CFGFLAGS="--without-pic --with-nonpic"
+			CFGFLAGS="--with-libr"
 		fi
 		# dup
 		echo ./configure --with-compiler=android \
-			--with-ostype=android --without-ewf \
+			--with-ostype=android \
 			--prefix=${PREFIX} ${CFGFLAGS}
 
 		./configure --with-compiler=android --with-ostype=android \
@@ -155,9 +162,9 @@ rm -f ${HERE}/${D}/${LIBDIR}/*.a
 rm -rf ${HERE}/${D}/${DATADIR}/radare2/*/www/*/node_modules
 rm -rf ${HERE}/${D}/${PREFIX}/include
 eval `grep ^VERSION= ${HERE}/config-user.mk`
-WWWROOT="/data/data/org.radare2.installer/radare2/share/radare2/${VERSION}/www"
-WWWWOOT="${HERE}/${D}/data/data/org.radare2.installer/www"
-WWWSOOT="${HERE}/${D}/data/data/org.radare2.installer/radare2/share/radare2/${VERSION}/www"
+WWWROOT="/data/data/org.radare.radare2installer/radare2/share/radare2/${VERSION}/www"
+WWWWOOT="${HERE}/${D}/data/data/org.radare.radare2installer/www"
+WWWSOOT="${HERE}/${D}/data/data/org.radare.radare2installer/radare2/share/radare2/${VERSION}/www"
 echo WWWROOT="${WWWROOT}"
 echo WWWROOT="${WWWWOOT}"
 echo WWWROOT="${WWWSOOT}"

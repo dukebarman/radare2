@@ -1,4 +1,4 @@
-.Dd May 15, 2016
+.Dd Aug 24, 2017
 .Dt RADARE2 1
 .Sh NAME
 .Nm radare2
@@ -11,14 +11,15 @@
 .Op Fl c Ar cmd
 .Op Fl e Ar k=v
 .Op Fl i Ar file
-.Op Fl k Ar k=v
+.Op Fl I Ar prefile
+.Op Fl k Ar kernel
 .Op Fl m Ar addr
-.Op Fl o Ar kernel
 .Op Fl p Ar project
 .Op Fl P Ar patch
-.Op Fl R Ar rarun2
+.Op Fl r Ar rarun2
+.Op Fl R Ar rr2rule
 .Op Fl s Ar addr
-.Op Fl 0AdDwntLquvV
+.Op Fl 0AdDwntLquvVxX
 .Ar -|--|=|file
 .Sh DESCRIPTION
 radare2 is a commandline hexadecimal editor.
@@ -35,6 +36,8 @@ Open radare2 on an empty file
 Equivalent of 'r2 malloc://512'
 .It Fl 0
 Print \\x00 after initialization and after every command executed
+.It Fl 2
+Close stderr before starting RCore
 .It Fl a Ar arch
 force asm.arch (x86, ppc, arm, mips, bf, java, ...)
 .It Fl A
@@ -54,11 +57,11 @@ Set configuration eval variable key=value. For example \-e scr.color=false
 .It Fl f
 Blocksize = file size
 .It Fl i Ar file
-Run script file
-.It Fl o Ar kernel
+Run script file. After the file is loaded
+.It Fl I Ar file
+Run script file. Before the file is loaded
+.It Fl k Ar kernel
 Select kernel (asm.os) for syscall resolution
-.It Fl k Ar k=v
-Perform SDB query into the core->sdb instance
 .It Fl l Ar plugfile
 Load given plugin file
 .It Fl L
@@ -68,19 +71,23 @@ map file at given address
 .It Fl M
 Disable demangling
 .It Fl n
-Do not load user settings/projects from ~/.radare2rc, ~/.config/radare2/radare2rc and the scripts inside .../radare2rc.d/ directory.
+Do not perform any analysis (r_bin). Just load the raw file
 .It Fl nn
 Only load the rbin structures (elf, mach0, ...)
 .It Fl N
-Do not perform any analysis (r_bin). Just load the raw file
+Do not load user settings/projects from ~/.radare2rc, ~/.config/radare2/radare2rc and the scripts inside .../radare2rc.d/ directory.
 .It Fl q
-Quiet mode (no prompt)
+Quiet mode (no prompt) and quit after running the commands specified with -i or -c
+.It Fl Q
+Same as q, but exiting without freeing RCore, this produces leaks at exit time, but saves some precious ms to run the testsuite in fast mode.
 .It Fl p Ar prj
 Set project file
 .It Fl P Ar file
-Apply rapatch file and quit
-.It Fl R Ar rarun2
+Apply rapatch file and quit (see doc/rapatch.md for more details)
+.It Fl r Ar rarun2
 Specify dbg.profile rarun2 profile to use when spawning a program for debugging
+.It Fl R Ar rarun2-directive
+Specify custom rarun2 directives without having to create a rarun2 profile
 .It Fl s Ar addr
 Start seeking at this address
 .It Fl S
@@ -99,6 +106,10 @@ Open in write mode
 Show help message
 .It Fl H
 Show files and environment help
+.It Fl x
+Open the file map without executable permissions
+.It Fl X
+Same as -e bin.usextr=false, do not use extract plugins, useful for dyldcache
 .El
 .Sh SHELL
 Type '?' for help
@@ -110,7 +121,7 @@ In r2 the debugger commands are implemented under the 'd' command. Type 'd?' for
 .Sh ENVIRONMENT
  RHOMEDIR     ~/.config/radare2
  RCFILE       ~/.radare2rc (user preferences, batch script)
- MAGICPATH    /usr/lib/radare2/0.10.0-git/magic
+ R2_MAGICPATH /usr/lib/radare2/0.10.0-git/magic
  R_DEBUG      if defined, show error messages and crash signal
  VAPIDIR      path to extra vapi directory
 .Ar FILE

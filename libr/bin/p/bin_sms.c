@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2015 - shengdi */
+/* radare - LGPL - Copyright 2015-2016 - shengdi */
 
 #include <r_bin.h>
 
@@ -11,64 +11,62 @@ typedef struct gen_hdr {
 	ut8 RegionRomSize; //Low 4 bits RomSize, Top 4 bits Region
 } SMS_Header;
 
-static int check(RBinFile *arch);
-static int check_bytes(const ut8 *buf, ut64 length);
-
-static void * load_bytes(RBinFile *arch, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb){
-	check_bytes (buf, sz);
-	return R_NOTNULL;
-}
-
-static int check(RBinFile *arch) {
-	const ut8 *bytes = arch ? r_buf_buffer (arch->buf) : NULL;
-	ut64 sz = arch ? r_buf_size (arch->buf): 0;
-	return check_bytes (bytes, sz);
-}
-
-#define CMP8(o,x) strncmp((const char*)bs+o,x,8)
-#define CMP4(o,x) strncmp((const char*)bs+o,x,4)
-static int check_bytes(const ut8 *bs, ut64 length) {
-	if (length > 0x2000 && !CMP8(0x1ff0, "TMR SEGA"))
+#define CMP8(o,x) strncmp((const char*)bs+(o),x,8)
+#define CMP4(o,x) strncmp((const char*)bs+(o),x,4)
+static bool check_bytes(const ut8 *bs, ut64 length) {
+	if (length > 0x2000 && !CMP8(0x1ff0, "TMR SEGA")) {
 		return true;
-	if (length > 0x4000 && !CMP8(0x3ff0, "TMR SEGA"))
+	}
+	if (length > 0x4000 && !CMP8(0x3ff0, "TMR SEGA")) {
 		return true;
-	if (length > 0x8000 && !CMP8(0x7ff0, "TMR SEGA"))
+	}
+	if (length > 0x8000 && !CMP8(0x7ff0, "TMR SEGA")) {
 		return true;
-	if (length > 0x9000 && !CMP8(0x8ff0, "TMR SEGA"))
+	}
+	if (length > 0x9000 && !CMP8(0x8ff0, "TMR SEGA")) {
 		return true;
-	if (length > 0x8000 && !CMP4(0x7fe0, "SDSC"))
+	}
+	if (length > 0x8000 && !CMP4(0x7fe0, "SDSC")) {
 		return true;
+	}
 	return false;
 }
 
-static RBinInfo* info(RBinFile *arch) {
-	const char *bs;
-	SMS_Header *hdr;
-	RBinInfo *ret = R_NEW0 (RBinInfo);
-	if (!ret) return NULL;
+static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb){
+	return check_bytes (buf, sz);
+}
 
-	if (!arch || !arch->buf) {
+static RBinInfo* info(RBinFile *bf) {
+	const char *bs;
+	SMS_Header *hdr = NULL;
+	RBinInfo *ret = R_NEW0 (RBinInfo);
+	if (!ret || !bf || !bf->buf) {
 		free (ret);
 		return NULL;
 	}
-	ret->file = strdup (arch->file);
+	ret->file = strdup (bf->file);
 	ret->type = strdup ("ROM");
 	ret->machine = strdup ("SEGA MasterSystem");
 	ret->os = strdup ("sms");
 	ret->arch = strdup ("z80");
 	ret->has_va = 1;
 	ret->bits = 8;
-	bs = (const char*)arch->buf->buf;
+	bs = (const char*)bf->buf->buf;
 	// TODO: figure out sections/symbols for this format and move this there
 	//       also add SDSC headers..and find entry
-	if (!CMP8(0x1ff0, "TMR SEGA"))
+	if (!CMP8(0x1ff0, "TMR SEGA")) {
 		hdr = (SMS_Header*)(bs + 0x1ff0);
-	if (!CMP8(0x3ff0, "TMR SEGA"))
+	} else if (!CMP8(0x3ff0, "TMR SEGA")) {
 		hdr = (SMS_Header*)(bs + 0x3ff0);
-	if (!CMP8(0x7ff0, "TMR SEGA"))
+	} else if (!CMP8(0x7ff0, "TMR SEGA")) {
 		hdr = (SMS_Header*)(bs + 0x7ff0);
-	if (!CMP8(0x8ff0, "TMR SEGA"))
+	} else if (!CMP8(0x8ff0, "TMR SEGA")) {
 		hdr = (SMS_Header*)(bs + 0x8ff0);
+	} else {
+		eprintf ("Cannot find magic SEGA copyright\n");
+		free (ret);
+		return NULL;
+	}
 
 	eprintf ("Checksum: 0x%04x\n", (ut32)hdr->CheckSum);
 	eprintf ("ProductCode: %02d%02X%02X\n", (hdr->Version >> 4), hdr->ProductCode[1],
@@ -112,12 +110,11 @@ static RBinInfo* info(RBinFile *arch) {
 }
 
 
-struct r_bin_plugin_t r_bin_plugin_sms = {
+RBinPlugin r_bin_plugin_sms = {
 	.name = "sms",
 	.desc = "SEGA MasterSystem/GameGear",
 	.license = "LGPL3",
 	.load_bytes = &load_bytes,
-	.check = &check,
 	.check_bytes = &check_bytes,
 	.info = &info,
 	.minstrlen = 10,
@@ -125,10 +122,9 @@ struct r_bin_plugin_t r_bin_plugin_sms = {
 };
 
 #ifndef CORELIB
-struct r_lib_struct_t radare_plugin = {
+R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_sms,
 	.version = R2_VERSION
 };
 #endif
-

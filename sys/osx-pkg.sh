@@ -9,12 +9,16 @@
 SRC=/tmp/r2osx
 PREFIX=/usr/local
 DST="$(pwd)/sys/osx-pkg/radare2.unpkg"
-VERSION="`./configure --version| head -n 1|awk '{print $1}'|cut -d - -f 2`"
-[ -z "${VERSION}" ] && VERSION=0.10.0
+if [ -n "$1" ]; then
+	VERSION="$1"
+else
+	VERSION="`./configure --version| head -n 1|awk '{print $1}'|cut -d - -f 2`"
+	[ -z "${VERSION}" ] && VERSION=1.1.0
+fi
 [ -z "${MAKE}" ] && MAKE=make
 
 rm -rf "${SRC}"
-${MAKE} mrproper
+${MAKE} mrproper 2>/dev/null
 ./configure --prefix="${PREFIX}" || exit 1
 ${MAKE} -j4 || exit 1
 # TODO: run sys/install.sh
@@ -25,9 +29,7 @@ if [ -d "${SRC}" ]; then
 		find . | cpio -o --format odc | gzip -c > "${DST}/Payload"
 	)
 	mkbom ${SRC} "${DST}/Bom"
-
 	# Repackage
-
 	pkgutil --flatten "${DST}" "${DST}/../radare2-${VERSION}.pkg"
 else
 	echo "Failed install. DESTDIR is empty"
