@@ -3,7 +3,7 @@
 
 // defines like IS_DIGIT, etc'
 #include "r_util/r_str_util.h"
-#include "r_userconf.h"
+#include <r_userconf.h>
 #include <stddef.h>
 
 // TODO: fix this to make it crosscompile-friendly: R_SYS_OSTYPE ?
@@ -12,6 +12,16 @@
 #undef __KFBSD__
 #undef __UNIX__
 #undef __WINDOWS__
+
+#define R_MODE_PRINT 0x000
+#define R_MODE_RADARE 0x001
+#define R_MODE_SET 0x002
+#define R_MODE_SIMPLE 0x004
+#define R_MODE_JSON 0x008
+#define R_MODE_ARRAY 0x010
+#define R_MODE_SIMPLEST 0x020
+#define R_MODE_CLASSDUMP 0x040
+#define R_MODE_EQUAL 0x080
 
 #define R_IN /* do not use, implicit */
 #define R_OWN /* pointer ownership is transferred */
@@ -100,6 +110,10 @@
 #  define UNUSED_FUNCTION(x) UNUSED_ ## x
 #endif
 
+#ifdef __EMSCRIPTEN__
+# define __UNIX__ 1
+#endif
+
 #ifdef __HAIKU__
 # define __UNIX__ 1
 #endif
@@ -110,31 +124,31 @@
 #define __KFBSD__ 0
 #endif
 
-#if __MINGW32__ || __MINGW64__
-#undef MINGW32
-#define MINGW32 1
-#endif
-
 #ifdef _MSC_VER
   #define restrict
   #define strcasecmp stricmp
   #define strncasecmp strnicmp
   #define __WINDOWS__ 1
+
+  #include <time.h>
+  static inline struct tm *gmtime_r(const time_t *t, struct tm *r) { return (gmtime_s(r, t))? NULL : r; }
 #endif
 
 #if defined(EMSCRIPTEN) || defined(__linux__) || defined(__APPLE__) || defined(__GNU__) || defined(__ANDROID__) || defined(__QNX__) || defined(__sun)
   #define __BSD__ 0
   #define __UNIX__ 1
 #endif
-#if __KFBSD__ || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__FreeBSD__)
+#if __KFBSD__ || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__DragonFly__)
   #define __BSD__ 1
   #define __UNIX__ 1
 #endif
-#if __WINDOWS__ || _WIN32 || MINGW32 && !(__MINGW64__ || __CYGWIN__)
+#if __WINDOWS__ || _WIN32
   #ifdef _MSC_VER
   /* Must be included before windows.h */
   #include <winsock2.h>
+  #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN
+  #endif
   #endif
   typedef int socklen_t;
   #undef USE_SOCKETS
@@ -142,7 +156,7 @@
   #undef __UNIX__
   #undef __BSD__
 #endif
-#if __WINDOWS__ || _WIN32 || __CYGWIN__ || MINGW32
+#if __WINDOWS__ || _WIN32
   #define __addr_t_defined
   #include <windows.h>
 #endif
@@ -183,7 +197,6 @@
   #define FUNC_ATTR_ALWAYS_INLINE
 #endif
 
-#include <r_userconf.h>
 #include <r_types_base.h>
 
 #undef _FILE_OFFSET_BITS
@@ -211,11 +224,13 @@ extern "C" {
 #define R_SYS_DIR "\\"
 #define R_SYS_ENVSEP ";"
 #define R_SYS_HOME "USERPROFILE"
+#define R_SYS_TMP "TEMP"
 #else
 #define FS "/"
 #define R_SYS_DIR "/"
 #define R_SYS_ENVSEP ":"
 #define R_SYS_HOME "HOME"
+#define R_SYS_TMP "TMPDIR"
 #endif
 
 #define R_JOIN_2_PATHS(p1, p2) p1 R_SYS_DIR p2
@@ -229,13 +244,6 @@ extern "C" {
 
 typedef int (*PrintfCallback)(const char *str, ...);
 
-// TODO NOT USED. DEPREACATE
-#if R_RTDEBUG
-#define IFRTDBG if (getenv ("LIBR_DEBUG"))
-#else
-#define IFRTDBG if (0)
-#endif
-
 /* compile-time introspection helpers */
 #define CTO(y,z) ((size_t) &((y*)0)->z)
 #define CTA(x,y,z) (x+CTO(y,z))
@@ -245,6 +253,8 @@ typedef int (*PrintfCallback)(const char *str, ...);
 #ifdef R_IPI
 #undef R_IPI
 #endif
+
+#define R_IPI
 
 #ifdef R_HEAP
 #undef R_HEAP
@@ -271,7 +281,7 @@ typedef int (*PrintfCallback)(const char *str, ...);
 #define R_LIB_VERSION_HEADER(x) \
 R_API const char *x##_version(void)
 #define R_LIB_VERSION(x) \
-R_API const char *x##_version () { return "" R2_GITTAP; }
+R_API const char *x##_version() { return "" R2_GITTAP; }
 
 #define BITS2BYTES(x) (((x)/8)+(((x)%8)?1:0))
 #define ZERO_FILL(x) memset (&x, 0, sizeof (x))
@@ -349,8 +359,15 @@ static inline void *r_new_copy(int size, void *data) {
 #define typeof(arg) __typeof__(arg)
 #endif
 
-#undef r_offsetof
+#if 1
 #define r_offsetof(type, member) offsetof(type, member)
+#else
+#if __SDB_WINDOWS__
+#define r_offsetof(type, member) ((unsigned long) (ut64)&((type*)0)->member)
+#else
+#define r_offsetof(type, member) ((unsigned long) &((type*)0)->member)
+#endif
+#endif
 
 #define R_BETWEEN(x,y,z) (((y)>=(x)) && ((y)<=(z)))
 #define R_ROUND(x,y) ((x)%(y))?(x)+((y)-((x)%(y))):(x)
@@ -374,7 +391,7 @@ static inline void *r_new_copy(int size, void *data) {
 #define HAVE_REGEXP 1
 #endif
 
-#if (__WINDOWS__ || MINGW32) && !__CYGWIN__
+#if __WINDOWS__
 #define PFMT64x "I64x"
 #define PFMT64d "I64d"
 #define PFMT64u "I64u"
@@ -430,6 +447,10 @@ static inline void *r_new_copy(int size, void *data) {
 #define R_SYS_ARCH "x86"
 #define R_SYS_BITS R_SYS_BITS_32
 #define R_SYS_ENDIAN 0
+#elif __EMSCRIPTEN__
+#define R_SYS_ARCH "wasm"
+#define R_SYS_BITS (R_SYS_BITS_32 | R_SYS_BITS_64)
+#define R_SYS_ENDIAN 0
 #elif __x86_64__
 #define R_SYS_ARCH "x86"
 #define R_SYS_BITS (R_SYS_BITS_32 | R_SYS_BITS_64)
@@ -470,6 +491,14 @@ static inline void *r_new_copy(int size, void *data) {
 /* we should default to wasm when ready */
 #define R_SYS_ARCH "x86"
 #define R_SYS_BITS R_SYS_BITS_32
+#elif __riscv__ || __riscv
+# define R_SYS_ARCH "riscv"
+# define R_SYS_ENDIAN 0
+# if __riscv_xlen == 32
+#  define R_SYS_BITS R_SYS_BITS_32
+# else
+#  define R_SYS_BITS (R_SYS_BITS_32 | R_SYS_BITS_64)
+# endif
 #else
 #ifdef _MSC_VER
 #ifdef _WIN64
@@ -531,6 +560,12 @@ enum {
 	R_SYS_ARCH_LM32 =  0x80000000LL, // 1<<31
 };
 
+#if HAVE_CLOCK_NANOSLEEP && CLOCK_MONOTONIC && (__linux__ || (__FreeBSD__ && __FreeBSD_version >= 1101000) || (__NetBSD__ && __NetBSD_Version__ >= 700000000))
+#define HAS_CLOCK_NANOSLEEP 1
+#else
+#define HAS_CLOCK_NANOSLEEP 0
+#endif
+
 /* os */
 #if defined (__QNX__)
 #define R_SYS_OS "qnx"
@@ -540,7 +575,7 @@ enum {
 #define R_SYS_OS "darwin"
 #elif defined (__linux__)
 #define R_SYS_OS "linux"
-#elif defined (__WINDOWS__) || defined (__CYGWIN__) || defined (MINGW32)
+#elif defined (__WINDOWS__)
 #define R_SYS_OS "windows"
 #elif defined (__NetBSD__ )
 #define R_SYS_OS "netbsd"
@@ -552,83 +587,66 @@ enum {
 #define R_SYS_OS "unknown"
 #endif
 
-#if __GNUC__
-#  define r_sys_trap() __builtin_trap()
-#else
-#  if __i386__ || __x86_64__
-#    define r_sys_trap() __asm__ __volatile__ ("int3")
-#  elif __arm__
-#    define r_sys_trap() __asm__ __volatile__ ("bkpt")
-#  elif __arm64__
-#    define r_sys_trap() __asm__ __volatile__ ("brk #1")
-#  else
-#    define r_sys_trap() __asm__ __volatile__ (".word 0");
-#  endif
-#endif
-
 #ifdef __cplusplus
 }
 #endif
 
-static inline void r_run_call1 (void *fcn, void *arg1) {
+static inline void r_run_call1(void *fcn, void *arg1) {
 	((void (*)(void *))(fcn))(arg1);
 }
 
-static inline void r_run_call2 (void *fcn, void *arg1, void *arg2) {
+static inline void r_run_call2(void *fcn, void *arg1, void *arg2) {
 	((void (*)(void *, void *))(fcn))(arg1, arg2);
 }
 
-static inline void r_run_call3 (void *fcn, void *arg1, void *arg2, void *arg3) {
+static inline void r_run_call3(void *fcn, void *arg1, void *arg2, void *arg3) {
 	((void (*)(void *, void *, void *))(fcn))(arg1, arg2, arg3);
 }
 
-static inline void r_run_call4 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4) {
+static inline void r_run_call4(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4) {
 	((void (*)(void *, void *, void *, void *))(fcn))(arg1, arg2, arg3, arg4);
 }
 
-static inline void r_run_call5 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5) {
+static inline void r_run_call5(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5) {
 	((void (*)(void *, void *, void *, void *, void *))(fcn))(arg1, arg2, arg3, arg4, arg5);
 }
 
-static inline void r_run_call6 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
+static inline void r_run_call6(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
 	void *arg6) {
 	((void (*)(void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
-static inline void r_run_call7 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
+static inline void r_run_call7(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
 	void *arg6, void *arg7) {
 	((void (*)(void *, void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
-static inline void r_run_call8 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
+static inline void r_run_call8(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
 	void *arg6, void *arg7, void *arg8) {
 	((void (*)(void *, void *, void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
-static inline void r_run_call9 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
+static inline void r_run_call9(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
 	void *arg6, void *arg7, void *arg8, void *arg9) {
 	((void (*)(void *, void *, void *, void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-static inline void r_run_call10 (void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
+static inline void r_run_call10(void *fcn, void *arg1, void *arg2, void *arg3, void *arg4, void *arg5,
 	void *arg6, void *arg7, void *arg8, void *arg9, void *arg10) {
 	((void (*)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
-#endif // R2_TYPES_H
-
-// Usage: R_DEFINE_OBJECT(r_asm);
-#if 0
-#define R_DEFINE_OBJECT(type) \
- R_API struct type##_t* type##_new() { \
-    return type##_init(R_NEW(struct type##_t)); \
- } \
- R_API struct type##_t* type##_free(struct type##_t *foo) { \
-    return (type##_deinit(foo), free(foo), NULL); \
- }
+#ifndef container_of
+# ifdef _MSC_VER
+#  define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+# else
+#  define container_of(ptr, type, member) ((type *)((char *)(__typeof__(((type *)0)->member) *){ptr} - offsetof(type, member)))
+# endif
 #endif
+
+#endif // R2_TYPES_H

@@ -1,4 +1,6 @@
-#include "r_core.h"
+/* radare2 - LGPL - Copyright 2009-2019 - pancake */
+
+#include <r_core.h>
 
 static const char *fortunes[] = {
 	"tips", "fun", "nsfw", "creepy"
@@ -65,7 +67,7 @@ R_API void r_core_fortune_print_random(RCore *core) {
 	}
 	if (line) {
 		if (r_config_get_i (core->config, "cfg.fortunes.clippy")) {
-			r_core_clippy (line);
+			r_core_clippy (core, line);
 		} else {
 			r_cons_printf (" -- %s\n", line);
 		}

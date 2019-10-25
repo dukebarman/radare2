@@ -5,28 +5,53 @@ include ../libr/config.mk
 include ../mk/platform.mk
 _INCLUDE_MK_GCC_=
 include ../mk/${COMPILER}.mk
+include ../mk/darwin.mk
 
 # Build against last capstone release or next
+ifeq ($(shell test -d ../.git && echo 1),1)
 CS_RELEASE=0
+else
+CS_RELEASE=1
+endif
+
+CS_NEXT=${CSNEXT}
 
 CAPSTONE_CFLAGS?=-g
 # CAPSTONE_MAKEFLAGS?=CAPSTONE_ARCHS="arm aarch64"
 
 GIT?=git
-WGET?=wget
+ifeq ($(shell type wget && echo 1),1)
+WGET?=wget -c --no-check-certificate -O
+else
+WGET?=curl -o
+endif
 
 ifeq ($(CS_RELEASE),1)
-CS_VER=3.0.5
+CS_VER=4.0.1
 CS_TAR=https://codeload.github.com/aquynh/capstone/tar.gz/$(CS_VER)
 #CS_TAR=http://capstone-engine.org/download/$(CS_VER)/capstone-$(CS_VER).tgz
 CS_PATCHES=0
 else
 CS_TAR=
-CS_URL=$(GIT_PREFIX)github.com/aquynh/capstone.git
-CS_UPD=20180916
+CS_URL_BASE=github.com/aquynh/capstone
+CS_URL=$(GIT_PREFIX)$(CS_URL_BASE).git
+CS_ARCHIVE=https://$(CS_URL_BASE)/archive
+CS_UPD=20190515
+ifeq ($(CS_NEXT),1)
+CS_TIP=5809774f62847e6755aa054746822ce32e369b3a
+CS_BRA=next
+else
+CS_TIP=c7d2b984af855ef9fbf8f8fd33ca7005da644b4a
+CS_BRA=v4
+endif
+ifeq ($(CS_COMMIT_ARCHIVE),1)
+CS_ARCHIVE_URL=$(CS_ARCHIVE)/$(CS_TIP).zip
+else
+CS_ARCHIVE_URL=
+endif
 # NOTE: when you update CS_TIP or CS_BRA, also update them in shlr/meson.build
-CS_BRA=master
-CS_TIP=e2c1cd46c06744beaceff42dd882de3a90f0a37c
+#CS_BRA=next
+#CS_TIP=38607453f3de85733f9604dffc27778db3b53766
 # REVERT THIS COMMIT BECAUSE ITS WRONG
 CS_REV=
 CS_PATCHES=1
@@ -38,7 +63,7 @@ HOST_CC?=gcc
 SHLR?=$(shell pwd)
 AR?=ar
 RANLIB?=ranlib
-MODS=sdb zip java tcc
+MODS=sdb zip java tcc mpc
 MODS+=gdb qnx ar
 # lz4
 ifneq ($(CC),cccl)
@@ -49,7 +74,7 @@ endif
 ifeq (1,$(USE_PTRACE_WRAP))
 MODS+=ptrace-wrap
 endif
-SDB_URL=git://github.com/radare/sdb
+SDB_URL=git://github.com/radareorg/sdb
 #SDB_URL=/Users/pancake/prg/sdb
 SPP_URL=git://github.com/radare/spp
 PTRACE_WRAP_URL=git://github.com/thestr4ng3r/ptrace-wrap
@@ -137,7 +162,7 @@ endif
 	cp -f sdb/src/.sdb${BUILD_EXT_EXE} $@
 
 .PHONY: sdb-sync sync-sdb sdbclean
-SDB_F=README.md config.mk src Makefile meson.build msvc
+SDB_F=README.md config.mk src Makefile meson.build
 SDB_SYNCFILES=$(addprefix sdb.vc/,${SDB_F})
 I=../libr/include
 
@@ -185,7 +210,7 @@ ptrace-wrap-sync sync-ptrace-wrap:
 	sed -e "s, library(, static_library(," -e "s,project(,# project(," -e "s,subdir(,# subdir(," ptrace-wrap.vc/meson.build > ptrace-wrap/meson.build
 	printf "include ../../libr/config.mk\ninclude ../../mk/platform.mk\ninclude ../../mk/${COMPILER}.mk\n\n" | cat - ptrace-wrap.vc/Makefile > ptrace-wrap/Makefile
 	rm -rf ptrace-wrap.vc
-	printf "CFLAGS+=-I\$$(STOP)/ptrace-wrap/include\nLINK+=\$$(STOP)/ptrace-wrap/libptrace_wrap.\$$(EXT_AR)\n" > ptrace-wrap/deps.mk
+	printf "CFLAGS+=-I\$$(STOP)/ptrace-wrap/include\nLINK+=\$$(STOP)/ptrace-wrap/libptrace_wrap.\$$(EXT_AR)\nPTRACEWRAP_OBJS=\$$(STOP)/ptrace-wrap/src/ptrace_wrap.o\n" > ptrace-wrap/deps.mk
 
 ptrace-wrap:
 	$(MAKE) -C ptrace-wrap all
@@ -249,14 +274,15 @@ capstone: capstone-$(CS_VER).tar.gz
 	rm -rf capstone
 	mv capstone-$(CS_VER) capstone
 ifeq ($(CS_PATCHES),1)
-	#cd capstone ; for PATCH in ../capstone-patches/* ; do patch -tp1 < $$PATCH ; done
-	cd capstone ; for PATCH in ../capstone-patches/* ; do patch -p1 < $$PATCH ; done
+	if [ -d capstone/.git ]; then \
+		cd capstone ; for PATCH in ../capstone-patches/* ; do patch -p1 < $$PATCH ; done ; \
+	fi
 endif
 	mkdir -p capstone/include/capstone
 	cp -rf capstone/include/*.h capstone/include/capstone
 
 capstone-$(CS_VER).tar.gz:
-	$(WGET) --no-check-certificate -O capstone-$(CS_VER).tar.gz -c $(CS_TAR)
+	$(WGET) capstone-$(CS_VER).tar.gz $(CS_TAR)
 else
 
 capstone: capstone-sync
@@ -265,15 +291,10 @@ capstone-sync:
 ifeq ($(WITHOUT_PULL),1)
 	@echo "Nothing to sync because of --without-pull"
 else
-	"$(SHELL)" capstone.sh "${CS_URL}" "${CS_BRA}" "${CS_TIP}" "${CS_REV}"
-ifeq ($(CS_PATCHES),1)
-	-cd capstone ; if [ -d .git ]; then $(GIT) reset --hard ; fi
-	#cd capstone ; for PATCH in ../capstone-patches/* ; do patch -tp1 < $$PATCH ; done
-	cd capstone ; for PATCH in ../capstone-patches/* ; do patch -p1 < $$PATCH ; done
-endif
+	"$(SHELL)" capstone.sh "${CS_URL}" "${CS_BRA}" "${CS_TIP}" "${CS_REV}" "${CS_ARCHIVE_URL}"
 endif
 
-.PHONY: capstone
+.PHONY: capstone capstone-sync
 endif
 
 ifeq (${EXT_AR},)
@@ -330,7 +351,7 @@ spp-sync sync-spp:
 	git add spp
 
 spp: spp-sync
-	CFLAGS="-DHAVE_FORK=${HAVE_FORK} -fPIC" $(MAKE) -C spp
+	CFLAGS="-DUSE_R2=1 -I../../libr/include -DHAVE_FORK=${HAVE_FORK} -fPIC" $(MAKE) -C spp r2lib
 
 SHLRS+=ar/libr_ar.a
 SHLRS+=bochs/lib/libbochs.a
@@ -349,8 +370,15 @@ libr_shlr.${EXT_AR}:
 	rm -rf .libr
 	mkdir .libr
 	for LIB in ${SHLRS} ; do \
-		if [ -f "$${LIB}" ]; then ${PARTIALLD} -o .libr/$$(basename $${LIB} .a).o $${LIB} ; fi ; \
+		if [ -f "$${LIB}" ]; then ${PARTIALLD} -o .libr/$$(basename $${LIB}.a).o $${LIB} ; fi ; \
 	done
 	${AR} crs $@ .libr/*.o
 
 .PHONY: spp
+
+.PHONY: mpc mpc-clean clean-mpc
+mpc:
+	$(MAKE) -C mpc all
+
+mpc-clean clean-mpc:
+	$(MAKE) -C mpc clean

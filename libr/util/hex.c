@@ -1,4 +1,5 @@
-/* radare - LGPL - Copyright 2007-2016 - pancake */ 
+/* radare - LGPL - Copyright 2007-2019 - pancake */
+
 #include "r_types.h"
 #include "r_util.h"
 #include <stdio.h>
@@ -6,7 +7,7 @@
 
 /* int c; ret = hex_to_byte(&c, 'c'); */
 R_API int r_hex_to_byte(ut8 *val, ut8 c) {
-	if (IS_DIGIT(c)) {
+	if (IS_DIGIT (c)) {
 		*val = (ut8)(*val) * 16 + (c - '0');
 	} else if (c >= 'A' && c <= 'F') {
 		*val = (ut8)(*val) * 16 + (c - 'A' + 10);
@@ -118,8 +119,8 @@ R_API char *r_hex_from_c_str(char *out, const char **code) {
 			case 'r': *out++='0';*out++='d';break;
 			case 'n': *out++='0';*out++='a';break;
 			case 'x': {
-				char c1 = iter[1];
-				char c2 = iter[2];
+				ut8 c1 = iter[1];
+				ut8 c2 = iter[2];
 				iter += 2;
 				if (c1 == '\0' || c2 == '\0') {
 					return NULL;
@@ -357,7 +358,7 @@ R_API int r_hex_pair2bin(const char *arg) {
 			break;
 		}
 		d = c;
-		if (*ptr!='.' && r_hex_to_byte (&c, *ptr)) {
+		if (*ptr != '.' && r_hex_to_byte (&c, *ptr)) {
 			eprintf ("Invalid hexa string at char '%c' (%s).\n",
 				*ptr, arg);
 			return -1;
@@ -467,7 +468,11 @@ R_API int r_hex_str2binmask(const char *in, ut8 *out, ut8 *mask) {
 			memcpy (mask + ilen, "f0", 3);
 		}
 		for (ptr = mask; *ptr; ptr++) {
-			*ptr = (*ptr == '.') ? '0' : 'f';
+			if (IS_HEXCHAR (*ptr)) {
+				*ptr = 'f';
+			} else if (*ptr == '.') {
+				*ptr = '0';
+			}
 		}
 		len = r_hex_str2bin ((char*)mask, mask);
 		if (len < 0) {
@@ -500,7 +505,7 @@ R_API st64 r_hex_bin_truncate (ut64 in, int n) {
 	return in;
 }
 
-// Check if str contains only hexademical characters and return length of bytes
+// Check if str contains only hexadecimal characters and return length of bytes
 R_API int r_hex_str_is_valid(const char* str) {
 	int i;
 	int len = 0;
@@ -514,7 +519,7 @@ R_API int r_hex_str_is_valid(const char* str) {
 		if (IS_HEXCHAR (str[i]) || IS_WHITESPACE (str[i])) {
 			continue;
 		}
-		return -1; //if we're here, then str isnt valid
+		return -1; //if we're here, then str isn't valid
 	}
 	return len;
 }

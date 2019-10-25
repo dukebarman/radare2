@@ -6,7 +6,7 @@
 #include "pdb_downloader.h"
 
 static bool checkExtract() {
-#if __WINDOWS__ && !__CYGWIN__
+#if __WINDOWS__
 	if (r_sys_cmd ("expand -? >nul") != 0) {
 		return false;
 	}
@@ -79,7 +79,7 @@ static int download(struct SPDBDownloader *pd) {
 							   guid,
 		                       archive_name_escaped,
 		                       abspath_to_archive);
-#if __WINDOWS__ && !__CYGWIN__
+#if __WINDOWS__
 		const char *cabextractor = "expand";
 		const char *format = "%s %s %s";
 		char *abspath_to_file = strdup (abspath_to_archive);
@@ -158,6 +158,8 @@ static int download(struct SPDBDownloader *pd) {
 void init_pdb_downloader(SPDBDownloaderOpt *opt, SPDBDownloader *pd) {
 	pd->opt = R_NEW0 (SPDBDownloaderOpt);
 	if (!pd->opt) {
+		pd->download = 0;
+		eprintf ("Cannot allocate memory for SPDBDownloaderOpt.\n");
 		return;
 	}
 	pd->opt->dbg_file = strdup (opt->dbg_file);
@@ -203,7 +205,7 @@ int r_bin_pdb_download(RCore *core, int isradjson, int *actions_done, SPDBOption
 	opt.extract = options->extract;
 
 	init_pdb_downloader (&opt, &pdb_downloader);
-	ret = pdb_downloader.download (&pdb_downloader);
+	ret = pdb_downloader.download ? pdb_downloader.download (&pdb_downloader) : 0;
 	if (isradjson && actions_done) {
 		printf ("%s\"pdb\":{\"file\":\"%s\",\"download\":%s}",
 		        *actions_done ? "," : "", opt.dbg_file, ret ? "true" : "false");

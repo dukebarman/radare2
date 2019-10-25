@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2015 - pancake */
+/* radare - LGPL - Copyright 2015-2019 - pancake */
 
 #include <r_types.h>
 #include <r_util.h>
@@ -44,16 +44,18 @@ struct boot_img_hdr {
 typedef struct {
 	Sdb *kv;
 	BootImage bi;
+	RBuffer *buf;
 } BootImageObj;
 
-static int bootimg_header_load(BootImage *bi, RBuffer *buf, Sdb *db) {
+static int bootimg_header_load(BootImageObj *obj, Sdb *db) {
 	char *n;
 	int i;
-	if (r_buf_size (buf) < sizeof (BootImage)) {
+	if (r_buf_size (obj->buf) < sizeof (BootImage)) {
 		return false;
 	}
 	// TODO make it endian-safe (void)r_buf_fread_at (buf, 0, (ut8*)bi, "IIiiiiiiiiiiii", 1);
-	(void) r_buf_read_at (buf, 0, (ut8 *) bi, sizeof (BootImage));
+	BootImage *bi = &obj->bi;
+	(void) r_buf_read_at (obj->buf, 0, (ut8 *)bi, sizeof (BootImage));
 	if ((n = r_str_ndup ((char *) bi->name, BOOT_NAME_SIZE))) {
 		sdb_set (db, "name", n, 0);
 		free (n);
@@ -82,7 +84,7 @@ static Sdb *get_sdb(RBinFile *bf) {
 	return ao? ao->kv: NULL;
 }
 
-static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut64 la, Sdb *sdb) {
+static bool load_buffer(RBinFile *bf, void **bin_obj, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
 	BootImageObj *bio = R_NEW0 (BootImageObj);
 	if (!bio) {
 		return false;
@@ -92,8 +94,9 @@ static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut
 		free (bio);
 		return false;
 	}
-	if (!bootimg_header_load (&bio->bi, bf->buf, bio->kv)) {
-		free(bio);
+	bio->buf = r_buf_ref (buf);
+	if (!bootimg_header_load (bio, bio->kv)) {
+		free (bio);
 		return false;
 	}
 	sdb_ns_set (sdb, "info", bio->kv);
@@ -101,12 +104,10 @@ static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut
 	return true;
 }
 
-static bool load(RBinFile *bf) {
-	return true;
-}
-
-static int destroy(RBinFile *bf) {
-	return true;
+static void destroy(RBinFile *bf) {
+	BootImageObj *bio = bf->o->bin_obj;
+	r_buf_free (bio->buf);
+	R_FREE (bf->o->bin_obj);
 }
 
 static ut64 baddr(RBinFile *bf) {
@@ -119,7 +120,6 @@ static RList *strings(RBinFile *bf) {
 }
 
 static RBinInfo *info(RBinFile *bf) {
-	// BootImageObj *bio;
 	RBinInfo *ret;
 	if (!bf || !bf->o || !bf->o->bin_obj) {
 		return NULL;
@@ -138,19 +138,17 @@ static RBinInfo *info(RBinFile *bf) {
 	ret->arch = strdup ("arm");
 	ret->has_va = 1;
 	ret->has_pi = 0;
-	ret->bits = 16; // 32? 64?
+	ret->bits = 16;
 	ret->big_endian = 0;
 	ret->dbg_info = 0;
 	ret->rclass = strdup ("image");
-#if 0
-	// bootimg_header_load (&art, bf->buf);
-	bio = bf->o->bin_obj;
-#endif
 	return ret;
 }
 
-static bool check_bytes(const ut8 *buf, ut64 length) {
-	return (buf && length > 12 && !strncmp ((const char *) buf, "ANDROID!", 8));
+static bool check_buffer(RBuffer *buf) {
+	ut8 tmp[13];
+	int r = r_buf_read_at (buf, 0, tmp, sizeof (tmp));
+	return r > 12 && !strncmp ((const char *)tmp, "ANDROID!", 8);
 }
 
 static RList *entries(RBinFile *bf) {
@@ -191,7 +189,7 @@ static RList *sections(RBinFile *bf) {
 	if (!(ptr = R_NEW0 (RBinSection))) {
 		return ret;
 	}
-	strncpy (ptr->name, "header", R_BIN_SIZEOF_STRINGS);
+	ptr->name = strdup ("header");
 	ptr->size = sizeof (BootImage);
 	ptr->vsize = bi->page_size;
 	ptr->paddr = 0;
@@ -203,7 +201,7 @@ static RList *sections(RBinFile *bf) {
 	if (!(ptr = R_NEW0 (RBinSection))) {
 		return ret;
 	}
-	strncpy (ptr->name, "kernel", R_BIN_SIZEOF_STRINGS);
+	ptr->name = strdup ("kernel");
 	ptr->size = bi->kernel_size;
 	ptr->vsize = ADD_REMAINDER (ptr->size, bi->page_size);
 	ptr->paddr = bi->page_size;
@@ -217,7 +215,7 @@ static RList *sections(RBinFile *bf) {
 		if (!(ptr = R_NEW0 (RBinSection))) {
 			return ret;
 		}
-		strncpy (ptr->name, "ramdisk", R_BIN_SIZEOF_STRINGS);
+		ptr->name = strdup ("ramdisk");
 		ptr->size = bi->ramdisk_size;
 		ptr->vsize = ADD_REMAINDER (bi->ramdisk_size, bi->page_size);
 		ptr->paddr = ROUND_DOWN (base, bi->page_size);
@@ -232,7 +230,7 @@ static RList *sections(RBinFile *bf) {
 		if (!(ptr = R_NEW0 (RBinSection))) {
 			return ret;
 		}
-		strncpy (ptr->name, "second", R_BIN_SIZEOF_STRINGS);
+		ptr->name = strdup ("second");
 		ptr->size = bi->second_size;
 		ptr->vsize = ADD_REMAINDER (bi->second_size, bi->page_size);
 		ptr->paddr = ROUND_DOWN (base, bi->page_size);
@@ -250,10 +248,9 @@ RBinPlugin r_bin_plugin_bootimg = {
 	.desc = "Android Boot Image",
 	.license = "LGPL3",
 	.get_sdb = &get_sdb,
-	.load = &load,
-	.load_bytes = &load_bytes,
+	.load_buffer = &load_buffer,
 	.destroy = &destroy,
-	.check_bytes = &check_bytes,
+	.check_buffer = &check_buffer,
 	.baddr = &baddr,
 	.sections = &sections,
 	.entries = entries,
@@ -261,7 +258,7 @@ RBinPlugin r_bin_plugin_bootimg = {
 	.info = &info,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_bootimg,

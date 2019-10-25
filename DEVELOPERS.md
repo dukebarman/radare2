@@ -19,7 +19,7 @@ for more info. Example usage can be found [here](https://www.stack.nl/~dimitri/d
  * \param maps RList of maps that will be searched through
  * \param min Pointer to a ut64 that the min will be stored in
  * \param max Pointer to a ut64 that the max will be stored in
- * \param skip How many maps to skip at the start of iteration
+ * \param skip How many maps to skip at the start of an iteration
  * \param width Divisor for the return value
  * \return (max-min)/width
  *
@@ -45,7 +45,7 @@ will check the coding style of the modified lines before committing them.
 You may find some additional notes on this topic in doc/vim.
 
 * Tabs are used for indentation. In a switch statement, the
-  cases are indentend at the switch level.
+  cases are indented at the switch level.
 
 ```c
 switch(n) {
@@ -160,9 +160,24 @@ a = (b << 3) * 5;
  }
 ```
 
+* Structure in the C files
+
+The structure of the C files in r2 must be like this:
+
+```c
+/* Copyright ... */        ## copyright
+#include <r_core.h>        ## includes
+static int globals         ## const, define, global variables
+static void helper() {}    ## static functions
+R_IPI void internal() {}   ## internal apis (used only inside the library)
+R_API void public() {}     ## public apis starting with constructor/destructor
+
+```
+
+
 * Why return int vs enum
 
-The reason why many places in r2land functions return int instead of an enum type is because enums cant be OR'ed; otherwise, it breaks the usage within a switch statement and swig cant handle that stuff.
+The reason why many places in r2land functions return int instead of an enum type is because enums can't be OR'ed; otherwise, it breaks the usage within a switch statement and swig can't handle that stuff.
 
 ```
 r_core_wrap.cxx:28612:60: error: assigning to 'RRegisterType' from incompatible type 'long'
@@ -176,7 +191,9 @@ r_core_wrap.cxx:32103:61: error: assigning to 'RDebugReasonType' from incompatib
 
 * Do not leave trailing whitespaces at the end of line
 
-* Do not use asserts
+* Do not use assert.h, use r_util/r_assert.h instead.
+
+* You can use `export R_DEBUG_ASSERT=1` to set a breakpoint when hitting an assert.
 
 * Do not use C99 variable declaration
     - This way we reduce the number of local variables per function
@@ -221,7 +238,7 @@ r_core_wrap.cxx:32103:61: error: assigning to 'RDebugReasonType' from incompatib
 
 * Do not use bashisms `[[`, `$'...'` etc.
 
-* Use our [shellcheck.sh](https://github.com/radare/radare2/blob/master/sys/shellcheck.sh) script to check for problems and for bashisms
+* Use our [shellcheck.sh](https://github.com/radareorg/radare2/blob/master/sys/shellcheck.sh) script to check for problems and for bashisms
 
 # Manage Endianness
 
@@ -425,7 +442,7 @@ in the code for various reasons.
 The source of the radare2 regression test suite can be found in the
 following github repository.
 ```sh
-   git clone git://github.com/radare/radare2-regressions
+   git clone git://github.com/radareorg/radare2-regressions
 ```
 
 See the `README.md` file in that repository for further information.
@@ -440,7 +457,7 @@ don't know how to do something which is supposed to be covered
 by this framework.
 
 You should report it into the github issues page.
-   https://github.com/radare/radare2/issues
+   https://github.com/radareorg/radare2/issues
 
 Otherwise, if you are looking for some more feedback, I will
 encourage you to send an email to any of the emails enumerated

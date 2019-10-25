@@ -125,6 +125,10 @@ R_API void *r_vector_shrink(RVector *vec);
 	if ((vec) && (vec)->a) \
 		for (it = (void *)(vec)->a; (char *)it != (char *)(vec)->a + ((vec)->len * (vec)->elem_size); it = (void *)((char *)it + (vec)->elem_size))
 
+#define r_vector_enumerate(vec, it, i) \
+	if ((vec) && (vec)->a) \
+		for (it = (void *)(vec)->a, i = 0; i < (vec)->len; it = (void *)((char *)it + (vec)->elem_size), i++)
+
 
 // RPVector
 
@@ -154,15 +158,29 @@ static inline bool r_pvector_empty(RPVector *vec) {
 	return r_pvector_len (vec) == 0;
 }
 
+// returns a pointer to the offset inside the array where the element of the index lies.
+static inline void **r_pvector_index_ptr(RPVector *vec, size_t index) {
+	return ((void **)vec->v.a) + index;
+}
+
+// same as r_pvector_index_ptr(<vec>, 0)
+static inline void **r_pvector_data(RPVector *vec) {
+	return (void **)vec->v.a;
+}
+
 // returns the respective pointer inside the vector if x is found or NULL otherwise.
 R_API void **r_pvector_contains(RPVector *vec, void *x);
 
 // removes and returns the pointer at the given index. Does not call free.
 R_API void *r_pvector_remove_at(RPVector *vec, size_t index);
 
+// removes the element x, if present. Does not call free.
+R_API void r_pvector_remove_data(RPVector *vec, void *x);
+
 // like r_vector_insert, but the pointer x is the actual data to be inserted.
 static inline void **r_pvector_insert(RPVector *vec, size_t index, void *x) {
-	return (void **)r_vector_insert (&vec->v, index, &x); }
+	return (void **)r_vector_insert (&vec->v, index, &x);
+}
 
 // like r_vector_insert_range.
 static inline void **r_pvector_insert_range(RPVector *vec, size_t index, void **first, size_t count) {

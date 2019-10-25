@@ -1,8 +1,35 @@
-/* radare2 - LGPL - Copyright 2018 - pancake */
+/* radare2 - LGPL - Copyright 2018-2019 - pancake */
 
 #include <r_fs.h>
 
 #define PROMPT_PATH_BUFSIZE 1024
+
+static bool handlePipes(RFS *fs, char *msg, const ut8 *data, const char *cwd) {
+	char *red = strchr (msg, '>');
+	if (red) {
+		*red++ = 0;
+		r_str_trim (msg);
+		red = r_str_trim_dup (red);
+		if (*red != '/') {
+			char *blu = r_str_newf ("%s/%s", cwd, red);
+			free (red);
+			red = blu;
+		} else {
+		}
+		RFSFile *f = r_fs_open (fs, red, true);
+		if (!f) {
+			eprintf ("Cannot open %s for writing\n", red);
+			free (red);
+			return true;
+		}
+		r_fs_write (fs, f, 0, data == NULL ? (const ut8 *) msg : data, strlen (msg));
+		free (red);
+		r_fs_close (fs, f);
+		r_fs_file_free (f);
+		return true;
+	}
+	return false;
+}
 
 R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 	char buf[PROMPT_PATH_BUFSIZE];
@@ -24,7 +51,7 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			r_list_free (list);
 			return false;
 		}
-		strncpy (path, buf, sizeof (path) - 1);
+		r_str_ncpy (path, buf, sizeof (path) - 1);
 	} else {
 		strcpy (path, "/");
 	}
@@ -39,7 +66,9 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			if (shell->readline) {
 				ptr = shell->readline ();
 			} else {
-				fgets (buf, sizeof (buf) - 1, stdin);
+				if (!fgets (buf, sizeof (buf) - 1, stdin)) {
+					break;
+				}
 				if (feof (stdin)) {
 					break;
 				}
@@ -49,7 +78,7 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			if (!ptr) {
 				break;
 			}
-			ptr = r_str_trim ((char *)ptr);
+			r_str_trim ((char *)ptr); // XXX abadidea
 			if (shell->hist_add) {
 				shell->hist_add (ptr);
 			}
@@ -58,7 +87,9 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			}
 		} else {
 			printf ("%s", prompt);
-			fgets (buf, sizeof (buf) - 1, stdin);
+			if (!fgets (buf, sizeof (buf) - 1, stdin)) {
+				break;
+			}
 			if (feof (stdin)) {
 				break;
 			}
@@ -69,8 +100,21 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			r_list_free (list);
 			return true;
 		}
-		if (buf[0] == '!') {
+		if (buf[0] == '#') {
+			// comment
+			continue;
+		} else if (buf[0] == ':') {
+			char *msg = fs->cob.cmdstr (fs->cob.core, buf + 1);
+			printf ("%s\n", msg);
+			free (msg);
+		} else if (buf[0] == '!') {
 			r_sandbox_system (buf + 1, 1);
+		} else if (!strncmp (buf, "echo", 4)) {
+			char *msg = r_str_trim_dup (buf + 4);
+			if (!handlePipes (fs, msg, NULL, path)) {
+				printf ("%s\n", msg);
+			}
+			free (msg);
 		} else if (!strncmp (buf, "ls", 2)) {
 			char *ptr = str;
 			r_list_free (list);
@@ -114,7 +158,7 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			eprintf ("%s\n", path);
 		} else if (!memcmp (buf, "cd ", 3)) {
 			char opath[PROMPT_PATH_BUFSIZE];
-			strncpy (opath, path, sizeof (opath) - 1);
+			r_str_ncpy (opath, path, sizeof (opath));
 			input = buf + 3;
 			while (*input == ' ') {
 				input++;
@@ -143,16 +187,11 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			list = r_fs_dir (fs, path);
 			if (r_list_empty (list)) {
 				RFSRoot *root;
-				bool found = false;
 				RListIter *iter;
 				r_list_foreach (fs->roots, iter, root) {
 					if (!strcmp (path, root->path)) {
 						r_list_append (list, root->path);
-						found = true;
 					}
-				}
-				if (!found) {
-					strcpy (path, opath);
 				}
 			}
 		} else if (!memcmp (buf, "cat ", 4)) {
@@ -171,11 +210,20 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			}
 			strncat (str, "/",   sizeof (str) - strlen (str) - 1);
 			strncat (str, input, sizeof (str) - strlen (str) - 1);
-			file = r_fs_open (fs, str);
+			char *p = strchr (str, '>');
+			if (p) {
+				*p = 0;
+			}
+			file = r_fs_open (fs, str, false);
 			if (file) {
+				if (p) {
+					*p = '>';
+				}
 				r_fs_read (fs, file, 0, file->size);
-				write (1, file->data, file->size);
-				free (file->data);
+				if (!handlePipes (fs, str, file->data, path)) {
+					write (1, file->data, file->size);
+				}
+				write (1, "\n", 1);
 				r_fs_close (fs, file);
 			} else {
 				eprintf ("Cannot open file\n");
@@ -214,11 +262,10 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			}
 			strcat (s, "/");
 			strcat (s, input);
-			file = r_fs_open (fs, s);
+			file = r_fs_open (fs, s, false);
 			if (file) {
 				r_fs_read (fs, file, 0, file->size);
 				r_file_dump (input, file->data, file->size, 0);
-				free (file->data);
 				r_fs_close (fs, file);
 			} else {
 				input -= 2; //OMFG!!!! O_O
@@ -232,6 +279,7 @@ R_API int r_fs_shell_prompt(RFSShell* shell, RFS* fs, const char* root) {
 			eprintf (
 				"Commands:\n"
 				" !cmd        ; escape to system\n"
+				" :cmd        ; escape to the r2 repl\n"
 				" ls [path]   ; list current directory\n"
 				" cd path     ; change current directory\n"
 				" cat file    ; print contents of file\n"

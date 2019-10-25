@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2007-2017 - pancake */
+/* radare - LGPL - Copyright 2007-2019 - pancake */
 
 #include <errno.h>
 #include <r_io.h>
@@ -44,29 +44,26 @@
 #include <mach-o/nlist.h>
 #endif
 
-
-static void trace_me (void);
-static char *get_and_escape_path (char *str);
+#if __WINDOWS__
+#include <windows.h>
+#include <tlhelp32.h>
+#include <winbase.h>
+#include <psapi.h>
+#endif
 
 /*
  * Creates a new process and returns the result:
  * -1 : error
  *  0 : ok
  */
-#if __WINDOWS__
-#include <windows.h>
-#include <tlhelp32.h>
-#include <winbase.h>
-#include <psapi.h>
 
+#if __WINDOWS__
 typedef struct {
 	HANDLE hnd;
 	ut64 winbase;
 } RIOW32;
 
 typedef struct {
-	int pid;
-	int tid;
 	ut64 winbase;
 	PROCESS_INFORMATION pi;
 } RIOW32Dbg;
@@ -107,7 +104,6 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 	STARTUPINFO si = { 0 } ;
 	DEBUG_EVENT de;
 	int pid, tid;
-	HANDLE th = INVALID_HANDLE_VALUE;
 	if (!*cmd) {
 		return -1;
 	}
@@ -157,8 +153,10 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 	}
 	cmdline[cmd_i] = '\0';
 
-	LPTSTR appname_ = r_sys_conv_utf8_to_utf16 (argv[0]);
-	LPTSTR cmdline_ = r_sys_conv_utf8_to_utf16 (cmdline);
+	LPTSTR appname_ = r_sys_conv_utf8_to_win (argv[0]);
+	LPTSTR cmdline_ = r_sys_conv_utf8_to_win (cmdline);
+	free (cmdline);
+	// TODO: Add DEBUG_PROCESS to support child process debugging
 	if (!CreateProcess (appname_, cmdline_, NULL, NULL, FALSE,
 						 CREATE_NEW_CONSOLE | DEBUG_ONLY_THIS_PROCESS,
 						 NULL, NULL, &si, &pi)) {
@@ -169,8 +167,8 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 	}
 	free (appname_);
 	free (cmdline_);
-	free (cmdline);
 	r_str_argv_free (argv);
+
 	/* get process id and thread id */
 	pid = pi.dwProcessId;
 	tid = pi.dwThreadId;
@@ -184,9 +182,6 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 		goto err_fork;
 	}
 
-	if (th != INVALID_HANDLE_VALUE) {
-		CloseHandle (th);
-	}
 	eprintf ("Spawned new process with pid %d, tid = %d\n", pid, tid);
 	winbase = (ut64)de.u.CreateProcessInfo.lpBaseOfImage;
 	wintid = tid;
@@ -195,7 +190,8 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 err_fork:
 	eprintf ("ERRFORK\n");
 	TerminateProcess (pi.hProcess, 1);
-	if (th != INVALID_HANDLE_VALUE) CloseHandle (th);
+	CloseHandle (pi.hThread);
+	CloseHandle (pi.hProcess);
 	return -1;
 }
 #else // windows
@@ -208,7 +204,6 @@ static void inferior_abort_handler(int pid) {
 }
 #endif
 
-// UNUSED
 static void trace_me (void) {
 #if __APPLE__
 	signal (SIGTRAP, SIG_IGN); //NEED BY STEP
@@ -229,13 +224,9 @@ static void trace_me (void) {
 	}
 #endif
 }
-#else
-static void trace_me (void) {
-	/* empty trace_me */
-}
 #endif
 
-void handle_posix_error(int err) {
+static void handle_posix_error(int err) {
 	switch (err) {
 	case 0:
 		// eprintf ("Success\n");
@@ -297,24 +288,16 @@ static RRunProfile* _get_run_profile(RIO *io, int bits, char **argv) {
 
 #if __APPLE__ && !__POWERPC__
 
-static void handle_redirection(char *path, int flag, posix_spawn_file_actions_t *fileActions, int fd) {
-	int mode = S_IRUSR | S_IWUSR;
-	posix_spawn_file_actions_addopen (fileActions, fd, path, flag, mode);
-}
-
 static void handle_posix_redirection(RRunProfile *rp, posix_spawn_file_actions_t *fileActions) {
-	int flag = 0;
+	const int mode = S_IRUSR | S_IWUSR;
 	if (rp->_stdin) {
-		flag |= O_RDONLY;
-		handle_redirection (rp->_stdin, flag, fileActions, STDIN_FILENO);
+		posix_spawn_file_actions_addopen (fileActions, STDIN_FILENO, rp->_stdin, O_RDONLY, mode);
 	}
 	if (rp->_stdout) {
-		flag |= O_WRONLY;
-		handle_redirection (rp->_stdout, flag, fileActions, STDOUT_FILENO);
+		posix_spawn_file_actions_addopen (fileActions, STDOUT_FILENO, rp->_stdout, O_WRONLY, mode);
 	}
 	if (rp->_stderr) {
-		flag |= O_WRONLY;
-		handle_redirection (rp->_stderr, flag, fileActions, STDERR_FILENO);
+		posix_spawn_file_actions_addopen (fileActions, STDERR_FILENO, rp->_stderr, O_WRONLY, mode);
 	}
 }
 
@@ -381,9 +364,7 @@ static int fork_and_ptraceme_for_mac(RIO *io, int bits, const char *cmd) {
 			}
 		}
 		// XXX: this is a workaround to fix spawning programs with spaces in path
-		if (strstr (argv[0], "\\ ")) {
-			argv[0] = r_str_replace (argv[0], "\\ ", " ", true);
-		}
+		r_str_arg_unescape (argv[0]);
 
 		ret = posix_spawnp (&p, argv[0], &fileActions, &attr, argv, NULL);
 		handle_posix_error (ret);
@@ -424,48 +405,9 @@ static int fork_and_ptraceme_for_mac(RIO *io, int bits, const char *cmd) {
 	posix_spawn_file_actions_destroy (&fileActions);
 	return p; // -1 ?
 }
-#endif
+#endif // __APPLE__ && !__POWERPC__
 
-static char *get_and_escape_path (char *str) {
-#if __APPLE__ && !__POWERPC__
-// wat
-	return NULL;
-#else
-	char *path_bin = strdup (str);
-	if (!path_bin) {
-		return NULL;
-	}
-	char *p = (char*) r_str_lchr (str, '/');
-	char *pp = (char*) r_str_tok (p, ' ', -1);
-
-	if (!pp) {
-		// There is nothing more to parse
-		free (path_bin);
-		return str;
-	}
-
-	path_bin[pp - str] = '\0';
-	if (strstr (path_bin, "\\ ")) {
-		path_bin = r_str_replace (path_bin, "\\ ", " ", true);
-	}
-	char *args = path_bin + (pp - str) + 1;
-	char *path_bin_escaped = r_str_arg_escape (path_bin);
-	int len = strlen (path_bin_escaped);
-
-	char *pbe = realloc (path_bin_escaped, len + 2);
-	if (pbe) {
-		path_bin_escaped = pbe;
-		strcpy (path_bin_escaped + len, " ");
-		char *final = r_str_append (path_bin_escaped, args);
-		free (path_bin);
-		return final;
-	}
-	free (path_bin_escaped);
-	free (path_bin);
-	return NULL;
-#endif
-}
-
+#if (!(__APPLE__ && !__POWERPC__))
 typedef struct fork_child_data_t {
 	RIO *io;
 	int bits;
@@ -494,14 +436,9 @@ static void fork_child_callback(void *user) {
 		char *_cmd = data->io->args ?
 					 r_str_appendf (strdup (data->cmd), " %s", data->io->args) :
 					 strdup (data->cmd);
-		char *path_escaped = get_and_escape_path (_cmd);
 		trace_me ();
-		char **argv = r_str_argv (path_escaped, NULL);
-		if (argv && strstr (argv[0], "\\ ")) {
-			argv[0] = r_str_replace (argv[0], "\\ ", " ", true);
-		}
+		char **argv = r_str_argv (_cmd, NULL);
 		if (!argv) {
-			free (path_escaped);
 			free (_cmd);
 			return;
 		}
@@ -509,6 +446,9 @@ static void fork_child_callback(void *user) {
 			int i;
 			for (i = 3; i < 1024; i++) {
 				(void)close (i);
+			}
+			for (i = 0; argv[i]; i++) {
+				r_str_arg_unescape (argv[i]);
 			}
 			if (execvp (argv[0], argv) == -1) {
 				eprintf ("Could not execvp: %s\n", strerror (errno));
@@ -518,18 +458,13 @@ static void fork_child_callback(void *user) {
 			eprintf ("Invalid execvp\n");
 		}
 		r_str_argv_free (argv);
-		free (path_escaped);
 		free (_cmd);
 	}
 }
 
-static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
-#if __APPLE__ && !__POWERPC__
-	return fork_and_ptraceme_for_mac(io, bits, cmd);
-#else
+static int fork_and_ptraceme_for_unix(RIO *io, int bits, const char *cmd) {
 	int ret, status, child_pid;
 	bool runprofile = io->runprofile && *(io->runprofile);
-
 	fork_child_data child_data;
 	child_data.io = io;
 	child_data.bits = bits;
@@ -564,6 +499,18 @@ static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
 		break;
 	}
 	return child_pid;
+}
+#endif
+
+static int fork_and_ptraceme(RIO *io, int bits, const char *cmd) {
+#if __APPLE__
+#  if __POWERPC__
+	return fork_and_ptraceme_for_unix (io, bits, cmd);
+#  else
+	return fork_and_ptraceme_for_mac (io, bits, cmd);
+#  endif
+#else
+	return fork_and_ptraceme_for_unix (io, bits, cmd);
 #endif
 }
 #endif
@@ -645,9 +592,9 @@ static RIODesc *__open(RIO *io, const char *file, int rw, int mode) {
 			if ((ret = _plugin->open (io, uri, rw, mode))) {
 				RIOW32Dbg *w32 = (RIOW32Dbg *)ret->data;
 				w32->winbase = winbase;
-				w32->tid = wintid;
+				w32->pi.dwThreadId = wintid;
+				*(RIOW32Dbg *)((RCore *)io->user)->dbg->user = *w32;
 			}
-
 #elif __APPLE__
 			sprintf (uri, "smach://%d", pid);		//s is for spawn
 			_plugin = r_io_plugin_resolve (io, (const char *)uri + 1, false);
@@ -693,8 +640,9 @@ static int __close (RIODesc *desc) {
 
 RIOPlugin r_io_plugin_debug = {
 	.name = "debug",
-	.desc = "Native debugger (dbg:///bin/ls dbg://1388 pidof:// waitfor://)",
+	.desc = "Attach to native debugger instance",
 	.license = "LGPL3",
+	.uris = "dbg://,pidof://,waitfor://",
 	.author = "pancake",
 	.version = "0.2.0",
 	.open = __open,
@@ -709,7 +657,7 @@ RIOPlugin r_io_plugin_debug = {
 };
 #endif
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_debug,

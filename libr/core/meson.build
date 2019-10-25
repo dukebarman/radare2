@@ -1,7 +1,10 @@
-files = [
+r_core_sources = [
   'anal_tp.c',
-  'asm.c',
+  'anal_objc.c',
+  'esil_data_flow.c',
+  'casm.c',
   'blaze.c',
+  'citem.c',
   'canal.c',
   'carg.c',
   'cbin.c',
@@ -29,7 +32,6 @@ files = [
   #'cmd_quit.c',
   #'cmd_search.c',
   #'cmd_search_rop.c',
-  #'cmd_section.c',
   #'cmd_seek.c',
   #'cmd_type.c',
   #'cmd_write.c',
@@ -40,22 +42,27 @@ files = [
   'cfile.c',
   'fortune.c',
   'gdiff.c',
-  'graph.c',
+  'zdiff.c',
+  'agraph.c',
   'hack.c',
   'libs.c',
   #'linux_heap_glibc.c',
-  'log.c',
+  'corelog.c',
   'panels.c',
   'patch.c',
   'plugin.c',
   'project.c',
   'pseudo.c',
   'rtr.c',
+  #'rtr_http.c',
+  #'rtr_shell.c',
   'task.c',
   'vasm.c',
   'visual.c',
   'vmarks.c',
   'vmenus.c',
+  'vmenus_graph.c',
+  'vmenus_zigns.c',
   'yank.c',
   'p/core_a2f.c',
   'p/core_java.c',
@@ -64,6 +71,9 @@ files = [
 r_core_inc = []
 if host_machine.system() != 'windows'
   r_core_inc += ['../../shlr/heap/include']
+else
+	r_core_sources += 'windows_heap.c'
+	r_core_inc += ['../../shlr/heap/include/r_windows']
 endif
 r_core_inc = [platform_inc, include_directories(r_core_inc)]
 
@@ -91,7 +101,6 @@ r_core_deps = [
   r_asm_dep,
   r_bp_dep,
   platform_deps,
-  sdb_dep,
   spp_dep,
   gdb_dep,
   java_dep
@@ -101,7 +110,7 @@ if use_libuv
   r_core_deps += libuv_dep
 endif
 
-r_core = library('r_core', files,
+r_core = library('r_core', r_core_sources,
   include_directories: r_core_inc,
   c_args: library_cflags,
   dependencies: r_core_deps,
@@ -114,7 +123,7 @@ r_core_dep = declare_dependency(link_with: r_core,
                                 include_directories: r_core_inc)
 
 pkgconfig_mod.generate(
-  libraries: [r_core],
+  r_core,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_core',

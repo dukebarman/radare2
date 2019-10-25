@@ -1,13 +1,13 @@
-files = [
+r_bin_sources = [
   'bin.c',
   'bin_write.c',
   'dbginfo.c',
   'demangle.c',
   'dwarf.c',
+  'blang.c',
   'filter.c',
   'bfile.c',
-  'obj.c',
-  'open.c',
+  'bobj.c',
   'p/bin_any.c',
   'p/bin_art.c',
   'p/bin_avr.c',
@@ -34,6 +34,7 @@ files = [
   'p/bin_mdmp.c',
   'p/bin_menuet.c',
   'p/bin_mz.c',
+  'p/bin_ne.c',
   'p/bin_nes.c',
   'p/bin_nin3ds.c',
   'p/bin_ninds.c',
@@ -47,6 +48,7 @@ files = [
   'p/bin_pe64.c',
   'p/bin_pebble.c',
   'p/bin_psxexe.c',
+  'p/bin_qnx.c',
   'p/bin_sfc.c',
   'p/bin_smd.c',
   'p/bin_sms.c',
@@ -61,10 +63,13 @@ files = [
   'p/bin_write_pe.c',
   'p/bin_write_pe64.c',
   'p/bin_xbe.c',
+  'p/bin_xnu_kernelcache.c',
   'p/bin_xtr_dyldcache.c',
   'p/bin_xtr_fatmach0.c',
+  'p/bin_xtr_pemixed.c',
   'p/bin_z64.c',
   'p/bin_zimg.c',
+
 
   'format/bflt/bflt.c',
   'format/coff/coff.c',
@@ -77,9 +82,12 @@ files = [
   'format/mach0/fatmach0.c',
   'format/mach0/mach0.c',
   'format/mach0/mach064.c',
+  'format/xnu/r_cf_dict.c',
+  'format/xnu/yxml.c',
   'format/mdmp/mdmp.c',
   'format/mdmp/mdmp_pe.c',
   'format/mdmp/mdmp_pe64.c',
+  'format/ne/ne.c',
   'format/mz/mz.c',
   'format/nxo/nxo.c',
   'format/objc/mach064_classes.c',
@@ -90,6 +98,7 @@ files = [
   'format/pe/pe64.c',
   'format/pe/pe64_write.c',
   'format/pe/pe_write.c',
+  'format/pe/pemixed.c',
   'format/te/te.c',
   'format/wasm/wasm.c',
   'format/zimg/zimg.c',
@@ -97,7 +106,8 @@ files = [
   'mangling/cxx.c',
   'mangling/cxx/cp-demangle.c',
   'mangling/demangler.c',
-  'mangling/dlang.c',
+  'mangling/rust.c',
+  'mangling/java.c',
   'mangling/microsoft_demangle.c',
   'mangling/msvc.c',
   'mangling/objc.c',
@@ -117,7 +127,7 @@ files = [
 
 r_bin_inc = [platform_inc, include_directories('mangling', 'format')]
 
-r_bin = library('r_bin', files,
+r_bin = library('r_bin', r_bin_sources,
   include_directories: r_bin_inc,
   c_args: ['-DR_API_BIN_ONLY=1'] + library_cflags,
   dependencies: [
@@ -126,7 +136,7 @@ r_bin = library('r_bin', files,
     r_hash_dep,
     r_magic_dep,
     r_socket_dep,
-    sdb_dep,
+    r_syscall_dep,
     java_dep,
     lz4_dep
   ],
@@ -138,8 +148,7 @@ r_bin = library('r_bin', files,
 r_bin_dep = declare_dependency(link_with: r_bin,
                                include_directories: r_bin_inc)
 
-pkgconfig_mod.generate(
-  libraries: [r_bin],
+pkgconfig_mod.generate(r_bin,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_bin',
@@ -147,7 +156,8 @@ pkgconfig_mod.generate(
   requires: pkgconfig_magic_requires + [
     'r_util',
     'r_io',
-    'r_socket'
+    'r_socket',
+    'r_syscall'
   ],
   description: 'radare foundation libraries'
 )

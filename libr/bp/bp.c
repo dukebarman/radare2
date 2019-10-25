@@ -344,12 +344,12 @@ R_API RBreakpointItem *r_bp_item_new (RBreakpoint *bp) {
 		}
 	}
 	/* allocate new slot */
-	bp->bps_idx_count += 16; // alocate space for 16 more bps
+	bp->bps_idx_count += 16; // allocate space for 16 more bps
 	RBreakpointItem **newbps = realloc (bp->bps_idx, bp->bps_idx_count * sizeof (RBreakpointItem*));
 	if (newbps) {
 		bp->bps_idx = newbps;
 	} else {
-		bp->bps_idx_count -= 16; // alocate space for 16 more bps
+		bp->bps_idx_count -= 16; // allocate space for 16 more bps
 	}
 	for (j = i; j < bp->bps_idx_count; j++) {
 		bp->bps_idx[j] = NULL;
@@ -379,8 +379,7 @@ R_API int r_bp_get_index_at (RBreakpoint *bp, ut64 addr) {
 R_API int r_bp_del_index(RBreakpoint *bp, int idx) {
 	if (idx >= 0 && idx < bp->bps_idx_count) {
 		r_list_delete_data (bp->bps, bp->bps_idx[idx]);
-		free (bp->bps_idx[idx]);
-		bp->bps_idx[idx] = NULL;
+		R_FREE (bp->bps_idx[idx]);
 		return true;
 	}
 	return false;
